@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JNFAM 수불부 관리 시스템</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{
+  --bg:#f4f6fa; --card:#fff; --line:#e3e8f0; --txt:#1e2532; --sub:#6b7688;
+  --blue:#2563eb; --blue-l:#eff4ff; --green:#059669; --green-l:#ecfdf5;
+  --amber:#d97706; --amber-l:#fffbeb; --red:#dc2626; --red-l:#fef2f2;
+  --purple:#7c3aed; --purple-l:#f5f3ff;
+}
+*{margin:0;padding:0;box-sizing:border-box;font-family:'Segoe UI','Malgun Gothic',sans-serif}
+body{background:var(--bg);color:var(--txt);font-size:14px}
+.layout{display:flex;min-height:100vh}
+.sidebar{width:220px;background:#101827;color:#cbd5e1;padding:20px 0;flex-shrink:0;position:sticky;top:0;height:100vh}
+.sidebar .logo{padding:0 20px 18px;border-bottom:1px solid #2a3548;margin-bottom:12px}
+.sidebar .logo b{color:#fff;font-size:17px;display:block}
+.sidebar .logo span{font-size:11px;color:#7d8aa0}
+.nav-item{display:flex;align-items:center;gap:10px;padding:11px 20px;cursor:pointer;font-size:14px;border-left:3px solid transparent}
+.nav-item:hover{background:#1a2438;color:#fff}
+.nav-item.active{background:#1e2a44;color:#fff;border-left-color:var(--blue)}
+.nav-item .badge{margin-left:auto;background:var(--amber);color:#fff;font-size:11px;border-radius:10px;padding:1px 7px}
+.conn{margin:14px 20px 0;padding:8px 10px;border-radius:8px;font-size:12px;background:#1a2438}
+.conn .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.main{flex:1;padding:24px 28px;max-width:1560px}
+h2.page-title{font-size:20px;margin-bottom:4px}
+.page-sub{color:var(--sub);font-size:13px;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-bottom:20px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+.kpi .k-label{font-size:12px;color:var(--sub);margin-bottom:6px}
+.kpi .k-value{font-size:23px;font-weight:800;letter-spacing:-.5px}
+.kpi .k-sub{font-size:12px;color:var(--sub);margin-top:4px}
+.kpi.b-blue{border-top:3px solid var(--blue)} .kpi.b-amber{border-top:3px solid var(--amber)}
+.kpi.b-green{border-top:3px solid var(--green)} .kpi.b-purple{border-top:3px solid var(--purple)}
+.kpi.b-red{border-top:3px solid var(--red)}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:20px}
+.panel h3{font-size:15px;margin-bottom:12px}
+.grid2{display:grid;grid-template-columns:1.2fr 1fr;gap:20px}
+@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f8fafc;color:var(--sub);font-weight:600;text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid #f0f2f6;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11.5px;font-weight:600}
+.tag.goods{background:var(--green-l);color:var(--green)}
+.tag.transit{background:var(--amber-l);color:var(--amber)}
+.tag.planned{background:#f1f5f9;color:#64748b}
+.tag.filled{background:var(--purple-l);color:var(--purple)}
+.tag.ok{background:var(--green-l);color:var(--green)}
+.tag.warn{background:var(--red-l);color:var(--red)}
+.btn{display:inline-flex;align-items:center;gap:6px;border:none;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;font-weight:600}
+.btn.primary{background:var(--blue);color:#fff} .btn.primary:hover{background:#1d4ed8}
+.btn.green{background:var(--green);color:#fff}
+.btn.ghost{background:#fff;border:1px solid var(--line);color:var(--txt)}
+.btn.sm{padding:4px 10px;font-size:12px;border-radius:6px}
+.btn.danger{background:var(--red-l);color:var(--red)}
+.btn.toggle{background:#f1f5f9;color:var(--sub);border:1px solid var(--line)}
+.btn.toggle.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+.toolbar .spacer{flex:1}
+select,input[type=text],input[type=number],input[type=date],textarea{
+  border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;color:var(--txt);width:100%}
+select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:var(--blue)}
+.filter-sel{width:auto}
+.period-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:16px}
+.period-bar b{font-size:13px}
+.period-bar input[type=date]{width:150px}
+.modal-bg{position:fixed;inset:0;background:rgba(15,23,42,.5);display:none;align-items:flex-start;justify-content:center;z-index:50;overflow-y:auto;padding:40px 16px}
+.modal-bg.open{display:flex}
+.modal{background:#fff;border-radius:14px;width:720px;max-width:100%;padding:22px}
+.modal h3{font-size:16px;margin-bottom:16px}
+.form-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.form-grid .full{grid-column:1/-1}
+.fld label{display:block;font-size:12px;color:var(--sub);margin-bottom:4px;font-weight:600}
+.code-preview{background:var(--blue-l);border:1px dashed var(--blue);border-radius:8px;padding:10px 12px;font-family:Consolas,monospace;font-size:13px;color:var(--blue);font-weight:700}
+.code-preview.transit{background:var(--amber-l);border-color:var(--amber);color:var(--amber)}
+.calc-box{background:#f8fafc;border-radius:8px;padding:10px 12px;font-size:13px;display:flex;gap:18px;flex-wrap:wrap}
+.calc-box b{font-variant-numeric:tabular-nums}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.item-card{border:1px solid var(--line);border-radius:10px;padding:14px}
+.item-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.item-card .ic-title{font-weight:700;font-size:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.item-card .row{display:flex;justify-content:space-between;font-size:12.5px;padding:3px 0}
+.item-card .row .v{font-weight:600;font-variant-numeric:tabular-nums}
+.chart-wrap{height:300px}
+.empty{color:var(--sub);text-align:center;padding:30px;font-size:13px}
+.banner{background:var(--amber-l);border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tbl-scroll{overflow-x:auto}
+.toast{position:fixed;bottom:24px;right:24px;background:#101827;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:100;display:none}
+.help{font-size:12px;color:var(--sub);line-height:1.7}
+.help code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11.5px}
+.mono{font-family:Consolas,monospace;font-size:12px}
+.days-late{color:var(--red);font-weight:700} .days-soon{color:var(--amber);font-weight:700}
+/* ===== Inventory Ledger (엑셀 원본 양식) ===== */
+.ledger-tbl{border:2px solid #d33;font-size:12.5px}
+.ledger-tbl th{background:#f3f4f6;color:#374151;border:1px solid #cdd3dd;text-align:center;padding:7px 8px}
+.ledger-tbl td{border:1px solid #dde2ea;padding:6px 9px}
+.ledger-tbl .grp-HF{background:#eaf3e2} .ledger-tbl .grp-HNO3{background:#fbe3f0}
+.ledger-tbl .grp-HCl{background:#e3ecf7} .ledger-tbl .grp-H2SO4{background:#fdeadd}
+.ledger-tbl td.center{text-align:center;vertical-align:middle}
+.ledger-tbl tr.total-row td{background:#ffff00;font-weight:800;border-top:2px solid #d33;font-size:13px}
+.ledger-tbl td.neg{color:var(--red)}
+.ledger-title{text-align:center;font-size:17px;font-weight:800;margin-bottom:2px}
+.ledger-ref{text-align:center;font-size:11.5px;color:var(--red);margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="sidebar">
+    <div class="logo"><b>JNFAM 수불부</b><span>Inventory Ledger System · 2026</span></div>
+    <div class="nav-item active" data-view="dashboard">📊 대시보드</div>
+    <div class="nav-item" data-view="inbound">📥 상품입고</div>
+    <div class="nav-item" data-view="outbound">📤 상품출고</div>
+    <div class="nav-item" data-view="transit">🚢 미착품 관리 <span class="badge" id="transitBadge" style="display:none"></span></div>
+    <div class="nav-item" data-view="ledger">📒 수불부</div>
+    <div class="nav-item" data-view="settings">⚙️ 설정</div>
+    <div class="conn" id="connStatus"><span class="dot" style="background:#94a3b8"></span>로컬 모드</div>
+  </nav>
+  <main class="main" id="main"></main>
+</div>
+<div class="modal-bg" id="modalBg"><div class="modal" id="modalBox"></div></div>
+<div class="toast" id="toast"></div>
+
+<script>
+const SEED = {"inbound": [{"id": "in001", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2025-12-24", "eta": "2026-01-28", "plantEta": "2026-01-28", "bl": "", "invoice": "JNF2025120901", "qty": 7440.0, "price": 0.8, "amount": 5952.0, "freight": 2171.88, "cc": 109.38, "duty": 1601.0, "trucking": 1078.13, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in002", "invType": "상품", "item": "HNO3", "purity": 0.68, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2025-12-24", "eta": "2026-01-28", "plantEta": "2026-01-28", "bl": "", "invoice": "JNF2025120901", "qty": 12400.0, "price": 0.8, "amount": 9920.0, "freight": 1303.12, "cc": 65.62, "duty": 800.0, "trucking": 646.87, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in003", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-01-25", "eta": "2026-02-25", "plantEta": "2026-03-02", "bl": "", "invoice": "JNF2026011304", "qty": 39240.0, "price": 1.63, "amount": 63961.0, "freight": 7200.0, "cc": 175.0, "duty": 80.0, "trucking": 3450.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in004", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-02-13", "eta": "2026-03-15", "plantEta": "2026-03-20", "bl": "", "invoice": "JNF2026012901 ", "qty": 39600.0, "price": 1.63, "amount": 64548.0, "freight": 6500.0, "cc": 194.0, "duty": 81.0, "trucking": 3707.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in005", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-02-06", "eta": "2026-03-16", "plantEta": "2026-03-25", "bl": "", "invoice": "JNF2026011601", "qty": 39240.0, "price": 0.5346, "amount": 20979.0, "freight": 6500.0, "cc": 175.0, "duty": 2106.0, "trucking": 3707.0, "etc": 1373.0, "manager": "mwlee", "note": ""}, {"id": "in006", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-02-16", "eta": "2026-03-25", "plantEta": "2026-04-01", "bl": "", "invoice": "JNF2026020201", "qty": 39600.0, "price": 0.53, "amount": 20988.0, "freight": 6500.0, "cc": 213.0, "duty": 2125.0, "trucking": 3707.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in007", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-02-16", "eta": "2026-03-25", "plantEta": "2026-04-03", "bl": "", "invoice": "JNF2026020501", "qty": 39680.0, "price": 0.8, "amount": 31744.0, "freight": 6400.0, "cc": 175.0, "duty": 3214.0, "trucking": 3707.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in008", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-02-20", "eta": "2026-04-05", "plantEta": "2026-04-07", "bl": "", "invoice": "JNF2026021101", "qty": 39600.0, "price": 1.63, "amount": 64548.0, "freight": 6400.0, "cc": 175.0, "duty": 81.0, "trucking": 3707.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in009", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-11", "eta": "2026-04-05", "plantEta": "2026-04-15", "bl": "", "invoice": "JNF2026030401", "qty": 20700.0, "price": 1.63, "amount": 33741.0, "freight": 3450.0, "cc": 175.0, "duty": 42.0, "trucking": 1854.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in010", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-09", "eta": "2026-04-15", "plantEta": "2026-04-17", "bl": "", "invoice": "JNF2026022501", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 7100.0, "cc": 213.0, "duty": 84.35, "trucking": 3707.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in011", "invType": "상품", "item": "H2SO4", "purity": 0.96, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-16", "eta": "2026-04-15", "plantEta": "2026-04-23", "bl": "", "invoice": "JNF2026030601", "qty": 16000.0, "price": 0.9, "amount": 14400.0, "freight": 2655.0, "cc": 194.0, "duty": 1458.0, "trucking": 1658.5, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in012", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-16", "eta": "2026-04-15", "plantEta": "2026-04-27", "bl": "", "invoice": "JNF2026030301", "qty": 39600.0, "price": 0.53, "amount": 20988.0, "freight": 6900.0, "cc": 213.0, "duty": 2125.04, "trucking": 3707.0, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in013", "invType": "상품", "item": "HNO3", "purity": 0.68, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-20", "eta": "2026-04-20", "plantEta": "2026-04-28", "bl": "", "invoice": "JNF2026031004", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 2950.0, "cc": 175.0, "duty": 1607.04, "trucking": 1853.5, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in014", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-20", "eta": "2026-04-26", "plantEta": "2026-04-29", "bl": "", "invoice": "JNF2026031003", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 2950.0, "cc": 125.0, "duty": 1607.04, "trucking": 1853.5, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in015", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-04", "eta": "2026-05-02", "plantEta": "2026-05-04", "bl": "", "invoice": "JNF2026031801", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 5900.0, "cc": 175.0, "duty": 84.35, "trucking": 3958.91, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in016", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-27", "eta": "2026-04-28", "plantEta": "2026-05-04", "bl": "", "invoice": "JNF2026032301", "qty": 20700.0, "price": 1.63, "amount": 33741.0, "freight": 2950.0, "cc": 175.0, "duty": 42.18, "trucking": 1979.46, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in017", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-27", "eta": "2026-04-28", "plantEta": "2026-05-15", "bl": "", "invoice": "JNF2026032503", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 3700.0, "cc": 175.0, "duty": 1607.04, "trucking": 1934.46, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in018", "invType": "상품", "item": "HNO3", "purity": 0.68, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-03-31", "eta": "2026-05-03", "plantEta": "2026-05-15", "bl": "", "invoice": "JNF2026032502", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 3700.0, "cc": 175.0, "duty": 1607.04, "trucking": 1934.46, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in019", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-15", "eta": "2026-05-17", "plantEta": "2026-05-18", "bl": "", "invoice": "JNF2026032302", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 7900.0, "cc": 213.0, "duty": 84.35, "trucking": 3768.63, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in020", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-22", "eta": "2026-05-22", "plantEta": "2026-05-22", "bl": "", "invoice": "JNF2026040602", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 8200.0, "cc": 293.0, "duty": 84.35, "trucking": 3858.63, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in021", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-21", "eta": "2026-05-27", "plantEta": "2026-05-27", "bl": "", "invoice": "JNF2026041004", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 10700.0, "cc": 213.0, "duty": 84.35, "trucking": 3838.07, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in022", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-18", "eta": "2026-05-25", "plantEta": "2026-05-29", "bl": "", "invoice": "JNF2026040201", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 4100.0, "cc": 190.0, "duty": 1607.04, "trucking": 1919.04, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in023", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-26", "eta": "2026-06-01", "plantEta": "2026-06-03", "bl": "", "invoice": "JNF2026040602", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 8400.0, "cc": 293.0, "duty": 84.35, "trucking": 3791.81, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in024", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-30", "eta": "2026-06-01", "plantEta": "2026-06-05", "bl": "", "invoice": "JNF2026042102", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 9100.0, "cc": 175.0, "duty": 84.0, "trucking": 3542.58, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in025", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-28", "eta": "2026-05-30", "plantEta": "2026-06-08", "bl": "", "invoice": "JNF2026042103", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 4550.0, "cc": 175.0, "duty": 1607.04, "trucking": 1927.03, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in026", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-04-26", "eta": "2026-06-01", "plantEta": "2026-06-13", "bl": "", "invoice": "JNF2026041003", "qty": 39600.0, "price": 0.53, "amount": 20988.0, "freight": 10200.0, "cc": 213.0, "duty": 2125.04, "trucking": 3476.02, "etc": 3288.0, "manager": "mwlee", "note": ""}, {"id": "in027", "invType": "상품", "item": "HNO3", "purity": 0.68, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-05-12", "eta": "2026-06-14", "plantEta": "2026-06-16", "bl": "", "invoice": "JNF2026042701", "qty": 19840.0, "price": 0.8, "amount": 15872.0, "freight": 4950.0, "cc": 175.0, "duty": 1607.04, "trucking": 1863.01, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in028", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-05-19", "eta": "2026-06-17", "plantEta": "2026-06-23", "bl": "", "invoice": "JNF2026050403", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 10300.0, "cc": 175.0, "duty": 84.35, "trucking": 3668.96, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in029", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-05-19", "eta": "2026-06-17", "plantEta": "2026-06-24", "bl": "", "invoice": "JNF2026051103", "qty": 41400.0, "price": 1.63, "amount": 67482.0, "freight": 10300.0, "cc": 175.0, "duty": 84.35, "trucking": 3668.96, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in030", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-05-15", "eta": "2026-06-15", "plantEta": "2026-06-24", "bl": "", "invoice": "JNF2026050402", "qty": 59400.0, "price": 0.53, "amount": 31482.0, "freight": 12600.0, "cc": 175.0, "duty": 3187.55, "trucking": 1863.01, "etc": 75.0, "manager": "mwlee", "note": ""}, {"id": "in031", "invType": "상품", "item": "HNO3", "purity": 0.65, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": "2026-05-26", "eta": "2026-06-25", "plantEta": "2026-06-30", "bl": "", "invoice": "JNF2026051104", "qty": 39680.0, "price": 0.8, "amount": 31744.0, "freight": 0, "cc": 0, "duty": 0, "trucking": 0, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in032", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": null, "eta": null, "plantEta": "2026-07-01", "bl": "", "invoice": "JNF2026051801", "qty": 41400.0, "price": 0.0, "amount": 0, "freight": 0, "cc": 0, "duty": 0, "trucking": 0, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in033", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": null, "eta": null, "plantEta": "2026-07-02", "bl": "", "invoice": "", "qty": 39600.0, "price": 0.0, "amount": 0, "freight": 0, "cc": 0, "duty": 0, "trucking": 0, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in034", "invType": "상품", "item": "HCl", "purity": 0.35, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": null, "eta": null, "plantEta": "2026-07-08", "bl": "", "invoice": "", "qty": 19800.0, "price": 0.0, "amount": 0, "freight": 0, "cc": 0, "duty": 0, "trucking": 0, "etc": 0, "manager": "mwlee", "note": ""}, {"id": "in035", "invType": "상품", "item": "HF", "purity": 0.49, "supplier": "JNF CO.,LTD.", "pack": "IBC", "etd": null, "eta": null, "plantEta": "2026-07-16", "bl": "", "invoice": "", "qty": 41400.0, "price": 0.0, "amount": 0, "freight": 0, "cc": 0, "duty": 0, "trucking": 0, "etc": 0, "manager": "mwlee", "note": ""}], "outbound": [{"id": "out001", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "KORECHEM", "date": "2026-01-23", "qty": 16800.0, "amount": 24864.0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out002", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-01-30", "qty": 4380.0, "amount": 13570.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out003", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-01-30", "qty": 2100.0, "amount": 3675.0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out004", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-03", "qty": 6570.0, "amount": 20355.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out005", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-03", "qty": 4200.0, "amount": 7350.0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out006", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-05", "qty": 6570.0, "amount": 20355.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out007", "item": "HNO3", "purity": 0.68, "pack": "IBC", "buyer": "KORECHEM", "date": "2026-02-05", "qty": 2480.0, "amount": 6462.4, "shuttle": 0, "inCode": "04HNIBCJNF68.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out008", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-10", "qty": 3285.0, "amount": 10177.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out009", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-13", "qty": 5490.0, "amount": 16962.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out010", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-13", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out011", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-15", "qty": 1095.0, "amount": 3392.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out012", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-17", "qty": 2190.0, "amount": 6785.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out013", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-20", "qty": 2190.0, "amount": 6785.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out014", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-20", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out015", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-24", "qty": 1095.0, "amount": 16962.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out016", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-24", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out017", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-27", "qty": 7670.0, "amount": 23747.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out018", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-02-27", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out019", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-03", "qty": 6540.0, "amount": 20355.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out020", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-03", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out021", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-05", "qty": 10900.0, "amount": 33925.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out022", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-06", "qty": 5450.0, "amount": 16962.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out023", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-06", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out024", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-10", "qty": 2100.0, "amount": 3675.0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out025", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-13", "qty": 7630.0, "amount": 23747.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out026", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-13", "qty": 1050.0, "amount": 1837.5, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out027", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-17", "qty": 5450.0, "amount": 20355.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out028", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-17", "qty": 2100.0, "amount": 3675.0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out029", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-24", "qty": 4380.0, "amount": 13570.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out030", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "Qcells", "date": "2026-03-26", "qty": 2190.0, "amount": 6785.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out031", "item": "HCl", "purity": 0.35, "pack": "IBC", "buyer": "PVJC", "date": "2026-04-20", "qty": 2180.0, "amount": 3453.2, "shuttle": 0, "inCode": "04HClIBCJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out032", "item": "H2SO4", "purity": 0.96, "pack": "IBC", "buyer": "SUNIVA", "date": "2026-04-27", "qty": 1600.0, "amount": 3120.0, "shuttle": 0, "inCode": "04H2SIBCJNF96.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out033", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-11", "qty": 19015.0, "amount": 26811.15, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out034", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-11", "qty": -535.0, "amount": 0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out035", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-11", "qty": 18434.0, "amount": 47006.7, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out036", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-11", "qty": -34.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out037", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-12", "qty": 19414.0, "amount": 27373.74, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out038", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-12", "qty": -724.0, "amount": 0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out039", "item": "HNO3", "purity": 0.65, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-12", "qty": 18634.0, "amount": 32423.16, "shuttle": 0, "inCode": "04HNIBCJNF65.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out040", "item": "HNO3", "purity": 0.65, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-12", "qty": -34.0, "amount": 0, "shuttle": 0, "inCode": "04HNIBCJNF65.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out041", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-13", "qty": 18643.0, "amount": 47539.65, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out042", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-13", "qty": -243.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out043", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-15", "qty": 18625.0, "amount": 47493.75, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out044", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-15", "qty": -225.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out045", "item": "HNO3", "purity": 0.65, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-26", "qty": 18652.0, "amount": 32454.48, "shuttle": 0, "inCode": "04HNIBCJNF65.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out046", "item": "HNO3", "purity": 0.65, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-26", "qty": -52.0, "amount": 0, "shuttle": 0, "inCode": "04HNIBCJNF65.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out047", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-27", "qty": 18715.0, "amount": 47723.25, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out048", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-27", "qty": -20.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out049", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-28", "qty": 18634.0, "amount": 26273.94, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out050", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-28", "qty": -1414.0, "amount": 0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out051", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-29", "qty": 18307.0, "amount": 46682.85, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out052", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-05-29", "qty": -1457.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out053", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-01", "qty": 18688.0, "amount": 47654.4, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out054", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-01", "qty": -38.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out055", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-03", "qty": 18715.0, "amount": 47723.25, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out056", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-03", "qty": -15.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out057", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-08", "qty": 18724.0, "amount": 47746.2, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out058", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-08", "qty": -24.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out059", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "KORECHEM", "date": "2026-06-08", "qty": 18400.0, "amount": 43608.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out060", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-15", "qty": 18724.0, "amount": 47746.2, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out061", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-15", "qty": -24.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out062", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-22", "qty": 18715.0, "amount": 47723.25, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out063", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-22", "qty": -15.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out064", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-25", "qty": 18398.0, "amount": 25941.18, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out065", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-25", "qty": -548.0, "amount": 0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out066", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-29", "qty": 18842.0, "amount": 48047.1, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out067", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-06-29", "qty": -142.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out068", "item": "HF", "purity": 0.49, "pack": "IBC", "buyer": "PVJC", "date": "2026-06-29", "qty": 11500.0, "amount": 35800.0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out069", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-01", "qty": 18516.0, "amount": 47215.8, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out070", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-01", "qty": -116.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out071", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-06", "qty": 18688.0, "amount": 47654.4, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out072", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-06", "qty": 12.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out073", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-09", "qty": 14901.0, "amount": 21010.41, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out074", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-09", "qty": -411.0, "amount": 0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out075", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-09", "qty": 3270.0, "amount": 4610.7, "shuttle": 0, "inCode": "04HClIBCJNF35.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out076", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-13", "qty": 18443.0, "amount": 47029.65, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out077", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-13", "qty": -43.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out078", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-15", "qty": 18470.0, "amount": 47098.5, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out079", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-15", "qty": -70.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out080", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-20", "qty": 18461.0, "amount": 47075.55, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": ""}, {"id": "out081", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "Qcells", "date": "2026-07-20", "qty": -61.0, "amount": 0, "shuttle": 0, "inCode": "04HFIBCJNF49.00%", "category": "Goods Issue", "manager": "mwlee", "note": "실계근량 차이"}, {"id": "out082", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "", "date": null, "qty": 18400.0, "amount": 0, "shuttle": 0, "inCode": "", "category": "충전", "manager": "mwlee", "note": "7/21 충전"}, {"id": "out083", "item": "HF", "purity": 0.49, "pack": "ISO", "buyer": "", "date": null, "qty": 18400.0, "amount": 0, "shuttle": 0, "inCode": "", "category": "충전", "manager": "mwlee", "note": "7/16 충전"}, {"id": "out084", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "", "date": null, "qty": 18280.0, "amount": 0, "shuttle": 0, "inCode": "", "category": "충전", "manager": "mwlee", "note": "7/13 충전"}, {"id": "out085", "item": "HNO3", "purity": 0.65, "pack": "ISO", "buyer": "", "date": null, "qty": 18600.0, "amount": 0, "shuttle": 0, "inCode": "", "category": "충전", "manager": "mwlee", "note": "5/28 충전"}, {"id": "out086", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": null, "qty": 840.0, "amount": 0, "shuttle": 0, "inCode": "04HClDRUMJNF35.00%", "category": "충전", "manager": "mwlee", "note": "ISO"}, {"id": "out087", "item": "HCl", "purity": 0.35, "pack": "ISO", "buyer": "Qcells", "date": null, "qty": 17440.0, "amount": 0, "shuttle": 0, "inCode": "04HClIBCJNF35.00%", "category": "충전", "manager": "mwlee", "note": "ISO"}], "beginning": [{"item": "HF", "purity": 0.49, "qty": 160930, "amt": 226869.01}, {"item": "HNO3", "purity": 0.65, "qty": 120280, "amt": 82972.06}, {"item": "HNO3", "purity": 0.68, "qty": 0, "amt": 0}, {"item": "HCl", "purity": 0.35, "qty": 122220, "amt": 41038.65}, {"item": "H2SO4", "purity": 0.96, "qty": 0, "amt": 0}], "master": {"items": [{"name": "HF", "abbr": "HF", "purities": [0.49]}, {"name": "HNO3", "abbr": "HN", "purities": [0.65, 0.68]}, {"name": "HCl", "abbr": "HCl", "purities": [0.35]}, {"name": "H2SO4", "abbr": "H2S", "purities": [0.96]}], "suppliers": ["JNF CO.,LTD."], "buyers": ["Qcells", "KORECHEM", "PVJC", "SUNIVA"], "packs": ["IBC", "ISO", "DRUM"], "invTypes": ["상품", "미착품", "선적예정(미인식)"]}};
+</script>
+
+<script type="module">
+/* ================= 상태 & 저장소 ================= */
+const state = { inbound:[], outbound:[], beginning:[], master:null, view:'dashboard',
+  filters:{in:'전체', out:'전체'}, period:{from:'',to:''}, chartMode:'amt' };
+let fb = null;
+let charts = {};
+const LSKEY='jnfam_ledger_v2', CFGKEY='jnfam_fb_config';
+/* 팀 공유용 기본 Firebase 설정 (jnfam-ledger 프로젝트) — 파일만 열면 자동 연결됩니다 */
+const DEFAULT_FB = {
+  apiKey: "AIzaSyDB1-k-Xp98Sw3mx2AM3AxROo-Y4_4FZoY",
+  authDomain: "jnfam-ledger.firebaseapp.com",
+  projectId: "jnfam-ledger",
+  storageBucket: "jnfam-ledger.firebasestorage.app",
+  messagingSenderId: "656610691213",
+  appId: "1:656610691213:web:1d03f91bd8dd36b2283ac4"
+};
+
+function localLoad(){
+  const raw = localStorage.getItem(LSKEY);
+  if(raw){ try{ const d=JSON.parse(raw); Object.assign(state,{inbound:d.inbound||[],outbound:d.outbound||[],beginning:d.beginning||[],master:d.master||SEED.master}); return true; }catch(e){} }
+  return false;
+}
+function localSave(){
+  localStorage.setItem(LSKEY, JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master}));
+}
+function uid(p){ return p + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+async function dbAdd(col, obj){
+  if(!obj.id) obj.id = uid(col.slice(0,2));
+  if(fb){ await fb.setDoc(fb.doc(fb.db,col,obj.id), obj); }
+  else { state[col].push(obj); localSave(); render(); }
+}
+async function dbUpdate(col, id, patch){
+  if(fb){ await fb.setDoc(fb.doc(fb.db,col,id), patch, {merge:true}); }
+  else { const r=state[col].find(x=>x.id===id); if(r) Object.assign(r,patch); localSave(); render(); }
+}
+async function dbDelete(col, id){
+  if(fb){ await fb.deleteDoc(fb.doc(fb.db,col,id)); }
+  else { state[col]=state[col].filter(x=>x.id!==id); localSave(); render(); }
+}
+async function saveConfigDoc(){
+  if(fb){ await fb.setDoc(fb.doc(fb.db,'config','app'), {beginning:state.beginning, master:state.master}); }
+  else { localSave(); render(); }
+}
+
+/* ================= Firebase ================= */
+async function connectFirebase(cfg, silent){
+  try{
+    const appM = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+    const fsM  = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+    const app = appM.initializeApp(cfg);
+    const db  = fsM.getFirestore(app);
+    fb = { db, doc:fsM.doc, setDoc:fsM.setDoc, deleteDoc:fsM.deleteDoc, collection:fsM.collection, writeBatch:fsM.writeBatch, getDocs:fsM.getDocs };
+    ['inbound','outbound'].forEach(col=>{
+      fsM.onSnapshot(fsM.collection(db,col), snap=>{
+        state[col]=snap.docs.map(d=>({id:d.id,...d.data()}));
+        render();
+      }, err=>{ toast('Firestore 오류: '+err.code); });
+    });
+    fsM.onSnapshot(fsM.doc(db,'config','app'), d=>{
+      if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; }
+      render();
+    });
+    localStorage.setItem(CFGKEY, JSON.stringify(cfg));
+    document.getElementById('connStatus').innerHTML='<span class="dot" style="background:#22c55e"></span>Firebase 연결됨 · '+(cfg.projectId||'');
+    if(!silent) toast('Firebase 연결 완료');
+    return true;
+  }catch(e){ toast('Firebase 연결 실패: '+e.message); console.error(e); return false; }
+}
+async function seedToFirebase(){
+  if(!fb) return;
+  let batch=fb.writeBatch(fb.db), n=0;
+  const push=(col,obj)=>{ batch.set(fb.doc(fb.db,col,obj.id),obj); if(++n>=400){ batch.commit(); batch=fb.writeBatch(fb.db); n=0; } };
+  SEED.inbound.forEach(r=>push('inbound',{...r}));
+  SEED.outbound.forEach(r=>push('outbound',{...r}));
+  batch.set(fb.doc(fb.db,'config','app'),{beginning:SEED.beginning, master:SEED.master});
+  await batch.commit();
+  toast('기존 엑셀 데이터 '+(SEED.inbound.length+SEED.outbound.length)+'건 업로드 완료');
+}
+
+/* ================= 코드 & 계산 ================= */
+const PREFIX = {'상품':'04','미착품':'05','선적예정(미인식)':'00'};
+const pct = p => (Number(p)*100).toFixed(2)+'%';
+const abbr = item => { const m=(state.master||SEED.master).items.find(i=>i.name===item); return m?m.abbr:item; };
+const supShort = s => s==='JNF CO.,LTD.' ? 'JNF' : (s||'').replace(/[^A-Za-z0-9]/g,'').slice(0,8);
+const inCode  = r => (PREFIX[r.invType]||'04') + abbr(r.item) + r.pack + supShort(r.supplier) + pct(r.purity);
+const outCode = r => '04' + r.item + r.pack + (r.buyer||'') + pct(r.purity);
+const capCost = r => (+r.freight||0)+(+r.cc||0)+(+r.duty||0);   // 총계(자본화) = 해상운송료+통관비+관세 (엑셀 R열)
+const cogc = r => (+r.amount||0) + capCost(r);                  // 원재료인식금액 = 금액+총계 (엑셀 Q열)
+const fmt = n => (n==null||isNaN(n)) ? '-' : Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
+const fmt2 = n => (n==null||isNaN(n)) ? '-' : Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+const money = n => (n<0?'-$':'$') + fmt2(Math.abs(n));
+const today = () => new Date().toISOString().slice(0,10);
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const dstr = v => (typeof v==='string') ? v : '';   // 날짜 안전 변환 (숫자·null 방어)
+const effInDate = r => dstr(r.plantEta) || dstr(r.eta) || dstr(r.etd) || '';
+/* 인식 시점: 상품=창고입고일, 미착품=FOB 선적일(ETD) */
+const effRecDate = r => r.invType==='미착품' ? (dstr(r.etd) || dstr(r.eta) || '') : effInDate(r);
+
+function itemGroups(){
+  const set=new Map();
+  (state.master||SEED.master).items.forEach(it=>it.purities.forEach(p=>set.set(it.name+'|'+p,{item:it.name,purity:p})));
+  [...state.inbound,...state.outbound,...state.beginning].forEach(r=>{ if(r.item&&r.purity!=null) set.set(r.item+'|'+r.purity,{item:r.item,purity:r.purity}); });
+  return [...set.entries()].map(([key,v])=>({key,...v,label:v.item+' '+pct(v.purity)}));
+}
+/* 구간(period) 반영 수불 계산: 구간 이전 실적은 기초로 이월 */
+function computeLedger(){
+  const {from,to}=state.period;
+  const before = d => from && d && d < from;
+  const within = d => (!from || !d || d >= from) && (!to || !d || d <= to);
+  return itemGroups().map(g=>{
+    const beg0 = state.beginning.filter(b=>b.item===g.item&&+b.purity===+g.purity);
+    let begQty = beg0.reduce((s,b)=>s+(+b.qty||0),0), begAmt = beg0.reduce((s,b)=>s+(+b.amt||0),0);
+    /* 입고 인식 = 상품(04) + 미착품(05) 모두 재고로 인식 (선적예정 00은 미인식) */
+    const insAll = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&(r.invType==='상품'||r.invType==='미착품'));
+    const outsAll = state.outbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.category!=='충전');
+    insAll.filter(r=>before(effRecDate(r))).forEach(r=>{ begQty+=(+r.qty||0); begAmt+=cogc(r); });
+    outsAll.filter(r=>before(r.date)).forEach(r=>{ begQty-=(+r.qty||0); begAmt-=(+r.amount||0); });
+    const ins = insAll.filter(r=>!before(effRecDate(r)) && within(effRecDate(r)));
+    const outs = outsAll.filter(r=>!before(r.date) && within(r.date));
+    const inQty = ins.reduce((s,r)=>s+(+r.qty||0),0), inAmt = ins.reduce((s,r)=>s+cogc(r),0);
+    const inTrQty = ins.filter(r=>r.invType==='미착품').reduce((s,r)=>s+(+r.qty||0),0);
+    const inTrAmt = ins.filter(r=>r.invType==='미착품').reduce((s,r)=>s+cogc(r),0);
+    const outQty = outs.reduce((s,r)=>s+(+r.qty||0),0), outAmt = outs.reduce((s,r)=>s+(+r.amount||0),0);
+    /* 출고코드별 내역 (Inventory Ledger 양식용) */
+    const ocMap = new Map();
+    outs.forEach(r=>{ const c=outCode(r); const o=ocMap.get(c)||{code:c,qty:0,amt:0}; o.qty+=(+r.qty||0); o.amt+=(+r.amount||0); ocMap.set(c,o); });
+    const inCodes = [...new Set(insAll.map(r=>inCode(r)))];
+    const transit = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.invType==='미착품');
+    const trQty = transit.reduce((s,r)=>s+(+r.qty||0),0), trAmt = transit.reduce((s,r)=>s+cogc(r),0);
+    const planned = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.invType==='선적예정(미인식)');
+    const plQty = planned.reduce((s,r)=>s+(+r.qty||0),0);
+    const endQty = begQty+inQty-outQty, endAmt = begAmt+inAmt-outAmt;   // 총 재고 = 상품(04) + 미착품(05)
+    return {...g, begQty,begAmt,inQty,inAmt,inTrQty,inTrAmt,outQty,outAmt,
+      endQty, endAmt,
+      goodsQty:endQty-trQty, goodsAmt:endAmt-trAmt,                     // 창고 상품(04)만
+      outCodes:[...ocMap.values()], inCodes,
+      trQty,trAmt,trCnt:transit.length, plQty,plCnt:planned.length};
+  }).filter(l=> l.begQty||l.inQty||l.outQty||l.trQty||l.plQty||l.begAmt );
+}
+function ledgerTotals(L){
+  return L.reduce((a,l)=>{['begQty','begAmt','inQty','inAmt','inTrQty','inTrAmt','outQty','outAmt','endQty','endAmt','goodsQty','goodsAmt','trQty','trAmt','plQty'].forEach(k=>a[k]=(a[k]||0)+l[k]);return a;},{});
+}
+
+/* ================= 공통 UI ================= */
+const $ = id => document.getElementById(id);
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; clearTimeout(t._h); t._h=setTimeout(()=>t.style.display='none',3200); }
+function openModal(html){ $('modalBox').innerHTML=html; $('modalBg').classList.add('open'); }
+function closeModal(){ $('modalBg').classList.remove('open'); }
+$('modalBg').addEventListener('click',e=>{ if(e.target.id==='modalBg') closeModal(); });
+document.querySelectorAll('.nav-item').forEach(n=>n.addEventListener('click',()=>{
+  document.querySelectorAll('.nav-item').forEach(x=>x.classList.remove('active'));
+  n.classList.add('active'); state.view=n.dataset.view; render();
+}));
+function invTag(t){
+  if(t==='상품') return '<span class="tag goods">상품 04</span>';
+  if(t==='미착품') return '<span class="tag transit">미착품 05</span>';
+  if(t==='충전') return '<span class="tag filled">충전(내부)</span>';
+  return '<span class="tag planned">선적예정 00</span>';
+}
+function periodLabel(){
+  const {from,to}=state.period;
+  if(!from&&!to) return '전체 기간';
+  return (from||'처음')+' ~ '+(to||'현재');
+}
+function periodBar(){
+  const {from,to}=state.period; const y=today().slice(0,4), m=today().slice(0,7);
+  return `<div class="period-bar">
+    <b>📅 구간 설정</b>
+    <input type="date" id="pFrom" value="${from}"> <span>~</span> <input type="date" id="pTo" value="${to}">
+    <button class="btn primary sm" onclick="app.applyPeriod()">적용</button>
+    <span style="width:8px"></span>
+    <button class="btn ghost sm" onclick="app.quickPeriod('','')">전체</button>
+    <button class="btn ghost sm" onclick="app.quickPeriod('${y}-01-01','${y}-12-31')">올해</button>
+    <button class="btn ghost sm" onclick="app.quickPeriod('${m}-01','${m}-31')">이번달</button>
+    <span class="spacer"></span>
+    <span class="help">현재 구간: <b>${periodLabel()}</b> · 구간 이전 실적은 기초재고로 이월 계산</span>
+  </div>`;
+}
+
+/* ================= 렌더 ================= */
+function render(){
+  const badge=$('transitBadge'); const trCnt=state.inbound.filter(r=>r.invType==='미착품').length;
+  badge.style.display = trCnt? 'inline-block':'none'; badge.textContent = trCnt;
+  const v=state.view;
+  if(v==='dashboard') renderDashboard();
+  else if(v==='inbound') renderInbound();
+  else if(v==='outbound') renderOutbound();
+  else if(v==='transit') renderTransit();
+  else if(v==='ledger') renderLedger();
+  else renderSettings();
+}
+
+/* ---------- 대시보드 (금액 중심) ---------- */
+function renderDashboard(){
+  const L=computeLedger(); const t=ledgerTotals(L);
+  const upcoming = state.inbound.filter(r=>r.invType!=='상품').sort((a,b)=>(dstr(a.eta)||'9999').localeCompare(dstr(b.eta)||'9999'));
+  const mode=state.chartMode;
+  $('main').innerHTML = `
+  <h2 class="page-title">대시보드</h2>
+  <div class="page-sub">상품(창고 재고)과 미착품(FOB 선적~창고 입고 전)을 금액 기준으로 관리합니다 · 기준일 ${today()}</div>
+  ${periodBar()}
+  ${!state.inbound.length? `<div class="banner">⚠️ 데이터가 없습니다. <b>설정 → 기존 엑셀 데이터 불러오기</b>를 실행하세요. <button class="btn primary sm" onclick="app.loadSeed()">지금 불러오기</button></div>`:''}
+  <div class="cards">
+    <div class="kpi b-red"><div class="k-label">총 재고금액 (상품+미착품)</div><div class="k-value">${money(t.endAmt||0)}</div><div class="k-sub">${fmt(t.endQty)} kg</div></div>
+    <div class="kpi b-green"><div class="k-label">상품 재고금액 (창고 04)</div><div class="k-value">${money(t.goodsAmt||0)}</div><div class="k-sub">${fmt(t.goodsQty)} kg</div></div>
+    <div class="kpi b-amber"><div class="k-label">미착품 금액 (운송 중 05)</div><div class="k-value">${money(t.trAmt||0)}</div><div class="k-sub">${fmt(t.trQty)} kg · ${L.reduce((s,l)=>s+l.trCnt,0)}건</div></div>
+    <div class="kpi b-blue"><div class="k-label">구간 입고 / 출고 금액</div><div class="k-value" style="font-size:19px">${money(t.inAmt||0)} / ${money(t.outAmt||0)}</div><div class="k-sub">${periodLabel()}</div></div>
+  </div>
+  <div class="grid2">
+    <div class="panel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <h3 style="margin:0">품목별 현황 (상품 vs 미착품)</h3>
+        <div>
+          <button class="btn toggle sm ${mode==='amt'?'on':''}" onclick="app.chartMode('amt')">금액($)</button>
+          <button class="btn toggle sm ${mode==='qty'?'on':''}" onclick="app.chartMode('qty')">수량(kg)</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="stockChart"></canvas></div>
+    </div>
+    <div class="panel"><h3>🚢 입고 예정 (미착품·선적예정)</h3>
+      <div class="tbl-scroll"><table><thead><tr><th>구분</th><th>품목</th><th class="num">수량(kg)</th><th class="num">금액($)</th><th>ETA</th><th>도착까지</th><th></th></tr></thead><tbody>
+      ${upcoming.length? upcoming.map(r=>{
+        const dd = r.eta? Math.ceil((new Date(r.eta)-new Date(today()))/864e5) : null;
+        const ddTxt = dd==null?'-': dd<0? `<span class="days-late">${-dd}일 지연</span>` : dd<=7? `<span class="days-soon">D-${dd}</span>` : 'D-'+dd;
+        return `<tr><td>${invTag(r.invType)}</td><td>${esc(r.item)} ${pct(r.purity)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
+        <td>${r.invType==='미착품'? `<button class="btn green sm" onclick="app.convertModal('${r.id}')">입고완료</button>`:''}</td></tr>`;
+      }).join(''): '<tr><td colspan="7" class="empty">입고 예정 건이 없습니다</td></tr>'}
+      </tbody></table></div>
+    </div>
+  </div>
+  <div class="panel"><h3>품목 카드 (구간: ${periodLabel()})</h3><div class="item-cards">
+    ${L.map(l=>`<div class="item-card"><div class="ic-title"><span>${esc(l.label)}</span><span style="color:var(--red)">${money(l.endAmt)}</span></div>
+      <div class="row"><span>총 재고 (04+05)</span><span class="v">${fmt(l.endQty)} kg</span></div>
+      <div class="row"><span>상품 재고 (창고)</span><span class="v" style="color:var(--green)">${money(l.goodsAmt)} · ${fmt(l.goodsQty)} kg</span></div>
+      <div class="row"><span>미착품 (운송중)</span><span class="v" style="color:var(--amber)">${money(l.trAmt)} · ${fmt(l.trQty)} kg</span></div>
+      <div class="row"><span>구간 입고 / 출고</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
+    </div>`).join('')}
+  </div></div>`;
+
+  const ctx=$('stockChart'); if(charts.stock) charts.stock.destroy();
+  const A = mode==='amt';
+  charts.stock = new Chart(ctx,{type:'bar',data:{labels:L.map(l=>l.label),
+    datasets:[
+      {label:A?'상품 재고금액':'상품 재고',data:L.map(l=>A?l.goodsAmt:l.goodsQty),backgroundColor:'#059669',stack:'s'},
+      {label:A?'미착품 금액':'미착품',data:L.map(l=>A?l.trAmt:l.trQty),backgroundColor:'#f59e0b',stack:'s'},
+      ...(A?[]:[{label:'선적예정',data:L.map(l=>l.plQty),backgroundColor:'#cbd5e1',stack:'s'}])]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'},
+      tooltip:{callbacks:{label:c=>c.dataset.label+': '+(A?'$':'')+fmt2(c.raw)+(A?'':' kg')}}},
+      scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>(A?'$':'')+fmt(v)}}}}});
+}
+
+/* ---------- 상품입고 ---------- */
+function renderInbound(){
+  const f=state.filters.in;
+  let rows=[...state.inbound].sort((a,b)=>(effInDate(b)||'').localeCompare(effInDate(a)||''));
+  if(f!=='전체') rows=rows.filter(r=>r.invType===f);
+  $('main').innerHTML = `
+  <h2 class="page-title">상품입고 (INBOUND)</h2>
+  <div class="page-sub">재고구분: 선적예정(00·미인식) → 미착품(05·FOB 선적완료) → 상품(04·창고 입고완료). 코드는 자동 생성됩니다.</div>
+  <div class="toolbar">
+    <select class="filter-sel" onchange="app.setFilter('in',this.value)">
+      ${['전체','상품','미착품','선적예정(미인식)'].map(o=>`<option ${o===f?'selected':''}>${o}</option>`).join('')}
+    </select>
+    <span class="spacer"></span>
+    <button class="btn ghost" onclick="app.exportExcel()">📄 엑셀 내보내기</button>
+    <button class="btn primary" onclick="app.inboundModal()">＋ 신규 입고 등록</button>
+  </div>
+  <div class="panel tbl-scroll"><table><thead><tr>
+    <th>재고구분</th><th>코드</th><th>품목</th><th>함량</th><th>용기</th><th>ETD</th><th>ETA</th><th>창고입고일</th><th>INVOICE</th>
+    <th class="num">수량(kg)</th><th class="num">단가</th><th class="num">금액($)</th><th class="num">총계*</th><th class="num">원재료인식($)</th><th></th>
+  </tr></thead><tbody>
+  ${rows.length? rows.map(r=>`<tr>
+    <td>${invTag(r.invType)}</td><td class="mono">${inCode(r)}</td><td>${esc(r.item)}</td><td>${pct(r.purity)}</td><td>${esc(r.pack)}</td>
+    <td>${r.etd||'-'}</td><td>${r.eta||'-'}</td><td>${r.plantEta||'-'}</td><td>${esc(r.invoice)||'-'}</td>
+    <td class="num">${fmt(r.qty)}</td><td class="num">${r.price?Number(r.price).toFixed(4):'-'}</td><td class="num">${fmt2(r.amount)}</td>
+    <td class="num">${fmt2(capCost(r))}</td><td class="num"><b>${fmt2(cogc(r))}</b></td>
+    <td>${r.invType==='미착품'?`<button class="btn green sm" onclick="app.convertModal('${r.id}')">입고완료</button> `:''}
+        ${r.invType==='선적예정(미인식)'?`<button class="btn sm" style="background:var(--amber-l);color:var(--amber)" onclick="app.shipModal('${r.id}')">선적완료</button> `:''}
+        <button class="btn ghost sm" onclick="app.inboundModal('${r.id}')">수정</button>
+        <button class="btn danger sm" onclick="app.del('inbound','${r.id}')">삭제</button></td>
+  </tr>`).join(''):'<tr><td colspan="15" class="empty">입고 데이터가 없습니다</td></tr>'}
+  </tbody></table>
+  <div class="help" style="margin-top:8px">* 총계 = 해상운송료+통관비+관세 (원재료인식금액에 포함). 운송비·기타비용은 별도 관리.</div></div>`;
+}
+
+/* ---------- 상품출고 ---------- */
+function renderOutbound(){
+  const f=state.filters.out;
+  let rows=[...state.outbound].sort((a,b)=>dstr(b.date).localeCompare(dstr(a.date)));
+  if(f!=='전체') rows=rows.filter(r=>r.category===f);
+  $('main').innerHTML = `
+  <h2 class="page-title">상품출고 (OUTBOUND)</h2>
+  <div class="page-sub">출고 코드는 04+품목+용기+판매처+함량으로 자동 생성됩니다. '충전' 구분은 내부 이동으로 수불 계산에서 제외됩니다.</div>
+  <div class="toolbar">
+    <select class="filter-sel" onchange="app.setFilter('out',this.value)">
+      ${['전체','Goods Issue','충전'].map(o=>`<option ${o===f?'selected':''}>${o}</option>`).join('')}
+    </select>
+    <span class="spacer"></span>
+    <button class="btn ghost" onclick="app.exportExcel()">📄 엑셀 내보내기</button>
+    <button class="btn primary" onclick="app.outboundModal()">＋ 신규 출고 등록</button>
+  </div>
+  <div class="panel tbl-scroll"><table><thead><tr>
+    <th>구분</th><th>출고코드</th><th>품목</th><th>함량</th><th>용기</th><th>판매처</th><th>출고일</th>
+    <th class="num">수량(kg)</th><th class="num">금액($)</th><th class="num">단가($/kg)</th><th>비고</th><th></th>
+  </tr></thead><tbody>
+  ${rows.length? rows.map(r=>`<tr>
+    <td>${invTag(r.category)}</td><td class="mono">${r.category==='충전'?'-':outCode(r)}</td><td>${esc(r.item)}</td><td>${pct(r.purity)}</td>
+    <td>${esc(r.pack)}</td><td>${esc(r.buyer)||'-'}</td><td>${r.date||'-'}</td>
+    <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(r.amount)}</td>
+    <td class="num">${r.qty? (r.amount/r.qty).toFixed(3):'-'}</td><td>${esc(r.note)||''}</td>
+    <td><button class="btn ghost sm" onclick="app.outboundModal('${r.id}')">수정</button>
+        <button class="btn danger sm" onclick="app.del('outbound','${r.id}')">삭제</button></td>
+  </tr>`).join(''):'<tr><td colspan="12" class="empty">출고 데이터가 없습니다</td></tr>'}
+  </tbody></table></div>`;
+}
+
+/* ---------- 미착품 관리 ---------- */
+function renderTransit(){
+  const transit = state.inbound.filter(r=>r.invType==='미착품').sort((a,b)=>dstr(a.eta).localeCompare(dstr(b.eta)));
+  const planned = state.inbound.filter(r=>r.invType==='선적예정(미인식)');
+  const converted = state.inbound.filter(r=>r.convert).sort((a,b)=>dstr(b.convert.date).localeCompare(dstr(a.convert.date)));
+  const sumQ=transit.reduce((s,r)=>s+(+r.qty||0),0), sumA=transit.reduce((s,r)=>s+cogc(r),0);
+  $('main').innerHTML = `
+  <h2 class="page-title">미착품 관리</h2>
+  <div class="page-sub">FOB 선적 완료 ~ 미국 창고 입고 전 화물. 창고 입고가 완료되면 <b>[입고완료 → 상품 전환]</b>으로 코드가 05 → 04로 자동 전환됩니다.</div>
+  <div class="cards">
+    <div class="kpi b-amber"><div class="k-label">미착품 원재료인식금액</div><div class="k-value">${money(sumA)}</div><div class="k-sub">금액 + 총계(운임·통관·관세)</div></div>
+    <div class="kpi b-amber"><div class="k-label">미착품 수량</div><div class="k-value">${fmt(sumQ)} kg</div><div class="k-sub">${transit.length}건</div></div>
+    <div class="kpi b-purple"><div class="k-label">선적예정(미인식)</div><div class="k-value">${planned.length}건</div><div class="k-sub">${fmt(planned.reduce((s,r)=>s+(+r.qty||0),0))} kg</div></div>
+  </div>
+  <div class="panel"><h3>🚢 운송 중 (미착품 05)</h3><div class="tbl-scroll"><table><thead><tr>
+    <th>미착품 코드</th><th>품목</th><th class="num">수량(kg)</th><th class="num">원재료인식($)</th><th>ETD</th><th>ETA</th><th>도착까지</th><th>INVOICE</th><th></th>
+  </tr></thead><tbody>
+  ${transit.length? transit.map(r=>{
+    const dd=r.eta?Math.ceil((new Date(r.eta)-new Date(today()))/864e5):null;
+    const ddTxt = dd==null?'-': dd<0?`<span class="days-late">${-dd}일 지연</span>`: dd<=7?`<span class="days-soon">D-${dd}</span>`:'D-'+dd;
+    return `<tr><td class="mono" style="color:var(--amber);font-weight:700">${inCode(r)}</td><td>${esc(r.item)} ${pct(r.purity)}</td>
+    <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}</td><td>${r.etd||'-'}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
+    <td>${esc(r.invoice)||'-'}</td>
+    <td><button class="btn green" onclick="app.convertModal('${r.id}')">✓ 입고완료 → 상품 전환</button></td></tr>`;
+  }).join(''):'<tr><td colspan="9" class="empty">운송 중인 미착품이 없습니다</td></tr>'}
+  </tbody></table></div></div>
+  <div class="panel"><h3>📋 전환 이력 (미착품 → 상품)</h3><div class="tbl-scroll"><table><thead><tr>
+    <th>전환일</th><th>이전 코드 (05)</th><th>현재 코드 (04)</th><th>품목</th><th class="num">수량(kg)</th><th>창고입고일</th>
+  </tr></thead><tbody>
+  ${converted.length? converted.map(r=>`<tr>
+    <td>${r.convert.date}</td><td class="mono" style="color:var(--amber)">${esc(r.convert.prevCode)}</td>
+    <td class="mono" style="color:var(--green);font-weight:700">${inCode(r)}</td>
+    <td>${esc(r.item)} ${pct(r.purity)}</td><td class="num">${fmt(r.qty)}</td><td>${r.plantEta||'-'}</td>
+  </tr>`).join(''):'<tr><td colspan="6" class="empty">전환 이력이 없습니다</td></tr>'}
+  </tbody></table></div></div>`;
+}
+
+/* ---------- 수불부 (Inventory Ledger 원본 양식) ---------- */
+function renderLedger(){
+  const L=computeLedger(); const t=ledgerTotals(L);
+  const grpClass = item => 'grp-'+item.replace(/[^A-Za-z0-9]/g,'');
+  const bodyRows = L.map(l=>{
+    const ocs = l.outCodes.length? l.outCodes : [{code:'-',qty:null,amt:null}];
+    const n = ocs.length; const gc = grpClass(l.item);
+    return ocs.map((oc,i)=>`<tr>
+      ${i===0?`<td class="center ${gc}" rowspan="${n}" style="font-weight:700">${esc(l.item)}<br><span style="font-weight:400;font-size:11px">${pct(l.purity)}</span></td>
+      <td class="center ${gc}" rowspan="${n}"><span class="mono">${l.inCodes.map(esc).join('<br>')||'-'}</span></td>`:''}
+      <td><span class="mono">${esc(oc.code)}</span></td>
+      ${i===0?`<td class="num center" rowspan="${n}">${fmt(l.begQty)}</td><td class="num center" rowspan="${n}">${fmt2(l.begAmt)}</td>
+      <td class="num center" rowspan="${n}">${fmt(l.inQty)}</td><td class="num center" rowspan="${n}">${fmt2(l.inAmt)}</td>`:''}
+      <td class="num">${oc.qty==null?'-':fmt(oc.qty)}</td><td class="num">${oc.amt==null?'-':fmt2(oc.amt)}</td>
+      ${i===0?`<td class="num center" rowspan="${n}">${fmt(l.goodsQty)}</td>
+      <td class="num center ${l.goodsAmt<0?'neg':''}" rowspan="${n}">${fmt2(l.goodsAmt)}</td>
+      <td class="num center" rowspan="${n}" style="color:var(--amber);font-weight:600">${l.trQty?fmt(l.trQty):'-'}</td>
+      <td class="num center" rowspan="${n}" style="color:var(--amber);font-weight:600">${l.trAmt?fmt2(l.trAmt):'-'}</td>
+      <td class="num center" rowspan="${n}" style="font-weight:700">${fmt(l.endQty)}</td>
+      <td class="num center ${l.endAmt<0?'neg':''}" rowspan="${n}" style="font-weight:700">${fmt2(l.endAmt)}</td>
+      <td class="center" rowspan="${n}">${Math.abs(l.begQty+l.inQty-l.outQty-l.endQty)<0.01? '<span class="tag ok">일치</span>':'<span class="tag warn">확인</span>'}</td>`:''}
+    </tr>`).join('');
+  }).join('');
+  $('main').innerHTML = `
+  <h2 class="page-title">수불부 (Inventory Ledger)</h2>
+  <div class="page-sub">기초 + 입고(상품 04 + 미착품 05 모두 재고 인식) − 출고 = 기말 총 재고 · 선적예정(00)·충전은 제외 · 미착품→상품 전환 시 분류만 이동(총 재고 불변)</div>
+  ${periodBar()}
+  <div class="cards">
+    <div class="kpi b-blue"><div class="k-label">총 기초재고</div><div class="k-value">${money(t.begAmt||0)}</div><div class="k-sub">${fmt(t.begQty)} kg</div></div>
+    <div class="kpi b-green"><div class="k-label">총 입고 (04+05 인식)</div><div class="k-value">${money(t.inAmt||0)}</div><div class="k-sub">${fmt(t.inQty)} kg · 미착품분 ${money(t.inTrAmt||0)}</div></div>
+    <div class="kpi b-purple"><div class="k-label">총 출고</div><div class="k-value">${money(t.outAmt||0)}</div><div class="k-sub">${fmt(t.outQty)} kg</div></div>
+    <div class="kpi b-red"><div class="k-label">총 기말재고 (상품+미착품)</div><div class="k-value">${money(t.endAmt||0)}</div><div class="k-sub">${fmt(t.endQty)} kg = 상품 ${money(t.goodsAmt||0)} + 미착품 ${money(t.trAmt||0)}</div></div>
+  </div>
+  <div class="panel">
+    <div class="ledger-title">Inventory Ledger</div>
+    <div class="ledger-ref">Reference Date: ${periodLabel()}</div>
+    <div class="toolbar" style="margin-bottom:10px"><span class="spacer"></span><button class="btn ghost sm" onclick="app.exportExcel()">📄 엑셀 내보내기</button></div>
+    <div class="tbl-scroll"><table class="ledger-tbl"><thead>
+      <tr><th rowspan="2">Product<br>Name</th><th rowspan="2">Inbound Code</th><th rowspan="2">Outbound Code</th>
+      <th colspan="2">Beginning Inventory(기초)</th><th colspan="2">Inbound(입고)<br><span style="font-weight:400;font-size:10.5px">상품 04 + 미착품 05</span></th><th colspan="2">Outbound(출고)</th>
+      <th colspan="2" style="background:var(--green-l)">상품 재고(04·창고)</th><th colspan="2" style="background:var(--amber-l)">미착품(05·운송중)</th>
+      <th colspan="2" style="background:#fff7cc">Ending Inventory(총 재고)<br><span style="font-weight:400;font-size:10.5px">상품 + 미착품</span></th>
+      <th rowspan="2">검증</th></tr>
+      <tr><th class="num">Quantity(수량)</th><th class="num">Amount(금액)</th><th class="num">Quantity(수량)</th><th class="num">Amount(금액)</th>
+      <th class="num">Quantity(수량)</th><th class="num">Amount(금액)</th>
+      <th class="num" style="background:var(--green-l)">Quantity(수량)</th><th class="num" style="background:var(--green-l)">Amount(금액)</th>
+      <th class="num" style="background:var(--amber-l)">Quantity(수량)</th><th class="num" style="background:var(--amber-l)">Amount(금액)</th>
+      <th class="num" style="background:#fff7cc">Quantity(수량)</th><th class="num" style="background:#fff7cc">Amount(금액)</th></tr>
+    </thead><tbody>
+      ${bodyRows}
+      <tr class="total-row"><td class="center" colspan="3">합계</td>
+        <td class="num">${fmt(t.begQty)}</td><td class="num">$ ${fmt2(t.begAmt)}</td>
+        <td class="num">${fmt(t.inQty)}</td><td class="num">$ ${fmt2(t.inAmt)}</td>
+        <td class="num">${fmt(t.outQty)}</td><td class="num">$ ${fmt2(t.outAmt)}</td>
+        <td class="num">${fmt(t.goodsQty)}</td><td class="num ${t.goodsAmt<0?'neg':''}">$ ${fmt2(t.goodsAmt)}</td>
+        <td class="num">${fmt(t.trQty)}</td><td class="num">$ ${fmt2(t.trAmt)}</td>
+        <td class="num">${fmt(t.endQty)}</td><td class="num ${t.endAmt<0?'neg':''}">$ ${fmt2(t.endAmt)}</td>
+        <td></td></tr>
+    </tbody></table></div>
+  </div>
+  <div class="panel"><h3>미착품 현황 (참고)</h3><div class="tbl-scroll"><table><thead><tr><th>품목</th><th>미착품 코드</th><th class="num">수량(kg)</th><th class="num">원재료인식금액($)</th><th>분류 기준</th></tr></thead><tbody>
+  ${L.filter(l=>l.trQty).map(l=>`<tr><td>${esc(l.label)}</td><td class="mono">05${abbr(l.item)}IBCJNF${pct(l.purity)}</td><td class="num">${fmt(l.trQty)}</td><td class="num">${fmt2(l.trAmt)}</td><td>FOB 선적 완료 ~ 미국 창고 입고 전</td></tr>`).join('') || '<tr><td colspan="5" class="empty">미착품이 없습니다</td></tr>'}
+  </tbody></table></div></div>`;
+}
+
+/* ---------- 설정 ---------- */
+function renderSettings(){
+  const cfg = localStorage.getItem(CFGKEY);
+  const M = state.master||SEED.master;
+  $('main').innerHTML = `
+  <h2 class="page-title">설정</h2><div class="page-sub">Firebase 연동, 기초재고, 마스터 데이터를 관리합니다.</div>
+  <div class="grid2">
+  <div>
+    <div class="panel"><h3>🔥 Firebase 연동</h3>
+      <div class="help" style="margin-bottom:10px">
+        1. <code>console.firebase.google.com</code> → 프로젝트 선택(또는 만들기)<br>
+        2. <b>빌드 → Firestore Database → 데이터베이스 만들기</b> (테스트 모드로 시작)<br>
+        3. 프로젝트 설정(⚙️) → 일반 → 내 앱 → <b>웹 앱 추가(&lt;/&gt;)</b> → <code>firebaseConfig</code> 값 복사<br>
+        4. 아래에 붙여넣고 연결 → 처음이면 <b>기존 엑셀 데이터 불러오기</b> 실행
+      </div>
+      <textarea id="fbCfg" rows="7" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'>${cfg?esc(cfg):''}</textarea>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn primary" onclick="app.connect()">연결하기</button>
+        <button class="btn ghost" onclick="app.disconnect()">연결 해제</button>
+      </div>
+    </div>
+    <div class="panel"><h3>💾 데이터</h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn green" onclick="app.loadSeed()">기존 엑셀 데이터 불러오기 (입고 ${SEED.inbound.length} · 출고 ${SEED.outbound.length}건)</button>
+        <button class="btn ghost" onclick="app.exportExcel()">📄 엑셀 내보내기</button>
+        <button class="btn ghost" onclick="app.backup()">JSON 백업</button>
+        <button class="btn danger" onclick="app.wipe()">전체 데이터 삭제</button>
+      </div>
+      <div class="help" style="margin-top:8px">현재: 입고 ${state.inbound.length}건 · 출고 ${state.outbound.length}건 · ${fb?'Firebase 저장':'브라우저(로컬) 저장'}</div>
+    </div>
+  </div>
+  <div>
+    <div class="panel"><h3>📦 기초재고 (2026 기초)</h3>
+      <table><thead><tr><th>품목</th><th class="num">수량(kg)</th><th class="num">금액($)</th></tr></thead><tbody>
+      ${state.beginning.map((b,i)=>`<tr><td>${esc(b.item)} ${pct(b.purity)}</td>
+        <td class="num"><input type="number" style="width:120px;text-align:right" value="${b.qty}" onchange="app.setBeg(${i},'qty',this.value)"></td>
+        <td class="num"><input type="number" style="width:120px;text-align:right" value="${b.amt}" onchange="app.setBeg(${i},'amt',this.value)"></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+    <div class="panel"><h3>🏷️ 마스터</h3>
+      <div class="help">품목: ${M.items.map(i=>`${i.name}(${i.purities.map(p=>pct(p)).join(', ')})`).join(' · ')}<br>
+      구매처: ${M.suppliers.join(', ')} · 판매처: ${M.buyers.join(', ')} · 용기: ${M.packs.join(', ')}</div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <input type="text" id="newBuyer" placeholder="판매처 추가">
+        <button class="btn ghost" onclick="app.addBuyer()">추가</button>
+      </div>
+    </div>
+  </div>
+  </div>`;
+}
+
+/* ================= 입력 모달 ================= */
+function inboundModal(id){
+  const M=state.master||SEED.master;
+  const r = id? state.inbound.find(x=>x.id===id) : {invType:'미착품',item:'HF',purity:0.49,supplier:M.suppliers[0],pack:'IBC',etd:'',eta:'',plantEta:'',bl:'',invoice:'',qty:'',price:'',amount:'',freight:0,cc:0,duty:0,trucking:0,etc:0,note:''};
+  const purityOpts = it => (M.items.find(x=>x.name===it)?.purities||[r.purity]).map(p=>`<option value="${p}" ${+p===+r.purity?'selected':''}>${pct(p)}</option>`).join('');
+  openModal(`
+  <h3>${id?'입고 수정':'신규 입고 등록'}</h3>
+  <div class="form-grid">
+    <div class="fld"><label>재고구분 *</label><select id="f_invType">${M.invTypes.map(t=>`<option ${t===r.invType?'selected':''}>${t}</option>`).join('')}</select></div>
+    <div class="fld"><label>품목 *</label><select id="f_item" onchange="app.syncPurity()">${M.items.map(i=>`<option ${i.name===r.item?'selected':''}>${i.name}</option>`).join('')}</select></div>
+    <div class="fld"><label>함량 *</label><select id="f_purity">${purityOpts(r.item)}</select></div>
+    <div class="fld"><label>구매처</label><select id="f_supplier">${M.suppliers.map(s=>`<option ${s===r.supplier?'selected':''}>${s}</option>`).join('')}</select></div>
+    <div class="fld"><label>용기</label><select id="f_pack">${M.packs.map(p=>`<option ${p===r.pack?'selected':''}>${p}</option>`).join('')}</select></div>
+    <div class="fld"><label>BL No.</label><input type="text" id="f_bl" value="${esc(r.bl)}"></div>
+    <div class="fld"><label>ETD (선적일)</label><input type="date" id="f_etd" value="${r.etd||''}"></div>
+    <div class="fld"><label>ETA (항구도착)</label><input type="date" id="f_eta" value="${r.eta||''}"></div>
+    <div class="fld"><label>창고입고일 (Plant ETA)</label><input type="date" id="f_plantEta" value="${r.plantEta||''}"></div>
+    <div class="fld"><label>INVOICE No.</label><input type="text" id="f_invoice" value="${esc(r.invoice)}"></div>
+    <div class="fld"><label>수량 (kg) *</label><input type="number" id="f_qty" value="${r.qty}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>단가 ($/kg)</label><input type="number" step="0.0001" id="f_price" value="${r.price}" oninput="app.calcIn(true)"></div>
+    <div class="fld"><label>금액 ($) — 자동계산</label><input type="number" step="0.01" id="f_amount" value="${r.amount}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>해상운송료</label><input type="number" step="0.01" id="f_freight" value="${r.freight}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>통관비</label><input type="number" step="0.01" id="f_cc" value="${r.cc}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>관세</label><input type="number" step="0.01" id="f_duty" value="${r.duty}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>운송비 (자본화 제외)</label><input type="number" step="0.01" id="f_trucking" value="${r.trucking}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>기타비용 (자본화 제외)</label><input type="number" step="0.01" id="f_etc" value="${r.etc}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>비고</label><input type="text" id="f_note" value="${esc(r.note)}"></div>
+    <div class="full"><label style="font-size:12px;color:var(--sub);font-weight:600">자동 생성 코드</label><div class="code-preview" id="codePreview"></div></div>
+    <div class="full calc-box" id="calcBox"></div>
+  </div>
+  <div class="modal-actions">
+    <button class="btn ghost" onclick="app.closeModal()">취소</button>
+    <button class="btn primary" onclick="app.saveInbound('${id||''}')">저장</button>
+  </div>`);
+  ['f_invType','f_item','f_purity','f_supplier','f_pack'].forEach(fid=>$(fid).addEventListener('change',calcIn));
+  calcIn();
+}
+function syncPurity(){
+  const M=state.master||SEED.master;
+  const it=$('f_item').value; const ps=M.items.find(x=>x.name===it)?.purities||[];
+  $('f_purity').innerHTML = ps.map(p=>`<option value="${p}">${pct(p)}</option>`).join('');
+  calcIn();
+}
+function calcIn(fromPrice){
+  const qty=+$('f_qty').value||0, price=+$('f_price').value||0;
+  if(fromPrice && qty && price) $('f_amount').value=(qty*price).toFixed(2);
+  const amount=+$('f_amount').value||0;
+  if(qty && amount && !price) $('f_price').value=(amount/qty).toFixed(4);
+  const r={invType:$('f_invType').value,item:$('f_item').value,purity:+$('f_purity').value,supplier:$('f_supplier').value,pack:$('f_pack').value,
+    freight:+$('f_freight').value||0,cc:+$('f_cc').value||0,duty:+$('f_duty').value||0,trucking:+$('f_trucking').value||0,etc:+$('f_etc').value||0,amount};
+  const cp=$('codePreview'); cp.textContent=inCode(r); cp.className='code-preview'+(r.invType==='미착품'?' transit':'');
+  $('calcBox').innerHTML=`<span>금액: <b>$${fmt2(amount)}</b></span><span>총계(운임+통관+관세): <b>$${fmt2(capCost(r))}</b></span><span>원재료인식금액: <b style="color:var(--blue)">$${fmt2(cogc(r))}</b></span><span style="color:var(--sub)">운송비·기타: $${fmt2((+r.trucking||0)+(+r.etc||0))}</span>`;
+}
+async function saveInbound(id){
+  const rec={invType:$('f_invType').value,item:$('f_item').value,purity:+$('f_purity').value,supplier:$('f_supplier').value,pack:$('f_pack').value,
+    etd:$('f_etd').value,eta:$('f_eta').value,plantEta:$('f_plantEta').value,bl:$('f_bl').value,invoice:$('f_invoice').value,
+    qty:+$('f_qty').value||0,price:+$('f_price').value||0,amount:+$('f_amount').value||0,
+    freight:+$('f_freight').value||0,cc:+$('f_cc').value||0,duty:+$('f_duty').value||0,trucking:+$('f_trucking').value||0,etc:+$('f_etc').value||0,
+    note:$('f_note').value};
+  if(!rec.qty){ toast('수량을 입력하세요'); return; }
+  if(rec.invType==='상품' && !rec.plantEta){ toast('상품은 창고입고일(Plant ETA)이 필요합니다'); return; }
+  if(id) await dbUpdate('inbound',id,rec); else await dbAdd('inbound',{id:uid('in'),...rec});
+  closeModal(); toast(id?'입고 수정 완료':'입고 등록 완료 — 코드: '+inCode(rec));
+}
+function outboundModal(id){
+  const M=state.master||SEED.master;
+  const r = id? state.outbound.find(x=>x.id===id) : {item:'HF',purity:0.49,pack:'ISO',buyer:M.buyers[0],date:today(),qty:'',amount:'',shuttle:0,category:'Goods Issue',note:''};
+  openModal(`
+  <h3>${id?'출고 수정':'신규 출고 등록'}</h3>
+  <div class="form-grid">
+    <div class="fld"><label>구분</label><select id="o_category">${['Goods Issue','충전'].map(c=>`<option ${c===r.category?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="fld"><label>품목 *</label><select id="o_item" onchange="app.syncPurityOut()">${M.items.map(i=>`<option ${i.name===r.item?'selected':''}>${i.name}</option>`).join('')}</select></div>
+    <div class="fld"><label>함량 *</label><select id="o_purity">${(M.items.find(x=>x.name===r.item)?.purities||[r.purity]).map(p=>`<option value="${p}" ${+p===+r.purity?'selected':''}>${pct(p)}</option>`).join('')}</select></div>
+    <div class="fld"><label>용기</label><select id="o_pack">${M.packs.map(p=>`<option ${p===r.pack?'selected':''}>${p}</option>`).join('')}</select></div>
+    <div class="fld"><label>판매처 *</label><select id="o_buyer">${M.buyers.map(b=>`<option ${b===r.buyer?'selected':''}>${b}</option>`).join('')}</select></div>
+    <div class="fld"><label>출고일 *</label><input type="date" id="o_date" value="${r.date||''}"></div>
+    <div class="fld"><label>출고수량 (kg) *</label><input type="number" id="o_qty" value="${r.qty}" oninput="app.calcOut()"></div>
+    <div class="fld"><label>출고금액 ($)</label><input type="number" step="0.01" id="o_amount" value="${r.amount}" oninput="app.calcOut()"></div>
+    <div class="fld"><label>Shuttle cost</label><input type="number" step="0.01" id="o_shuttle" value="${r.shuttle||0}"></div>
+    <div class="fld full"><label>비고</label><input type="text" id="o_note" value="${esc(r.note)}"></div>
+    <div class="full"><label style="font-size:12px;color:var(--sub);font-weight:600">자동 생성 출고코드</label><div class="code-preview" id="codePreviewOut"></div></div>
+    <div class="full calc-box" id="calcBoxOut"></div>
+  </div>
+  <div class="modal-actions">
+    <button class="btn ghost" onclick="app.closeModal()">취소</button>
+    <button class="btn primary" onclick="app.saveOutbound('${id||''}')">저장</button>
+  </div>`);
+  ['o_item','o_purity','o_pack','o_buyer','o_category'].forEach(fid=>$(fid).addEventListener('change',calcOut));
+  calcOut();
+}
+function syncPurityOut(){
+  const M=state.master||SEED.master;
+  const ps=M.items.find(x=>x.name===$('o_item').value)?.purities||[];
+  $('o_purity').innerHTML=ps.map(p=>`<option value="${p}">${pct(p)}</option>`).join('');
+  calcOut();
+}
+function calcOut(){
+  const r={item:$('o_item').value,purity:+$('o_purity').value,pack:$('o_pack').value,buyer:$('o_buyer').value};
+  $('codePreviewOut').textContent = $('o_category').value==='충전' ? '(충전 — 수불 제외)' : outCode(r);
+  const q=+$('o_qty').value||0,a=+$('o_amount').value||0;
+  const led=computeLedger().find(l=>l.item===r.item&&+l.purity===+r.purity);
+  const stock=led?led.goodsQty:0;
+  $('calcBoxOut').innerHTML=`<span>단가: <b>${q?(a/q).toFixed(3):'-'} $/kg</b></span><span>현재 상품재고: <b>${fmt(stock)} kg</b></span><span>출고 후: <b style="color:${stock-q<0?'var(--red)':'var(--green)'}">${fmt(stock-q)} kg</b></span>`;
+}
+async function saveOutbound(id){
+  const rec={category:$('o_category').value,item:$('o_item').value,purity:+$('o_purity').value,pack:$('o_pack').value,buyer:$('o_buyer').value,
+    date:$('o_date').value,qty:+$('o_qty').value||0,amount:+$('o_amount').value||0,shuttle:+$('o_shuttle').value||0,
+    note:$('o_note').value,inCode:''};
+  if(!rec.qty||!rec.date){ toast('출고일과 수량을 입력하세요'); return; }
+  if(rec.category!=='충전'){
+    const led=computeLedger().find(l=>l.item===rec.item&&+l.purity===+rec.purity);
+    const cur=(led?led.goodsQty:0)+(id? (+state.outbound.find(x=>x.id===id)?.qty||0):0);
+    if(rec.qty>cur && !confirm(`현재 상품재고(${fmt(cur)} kg)보다 많은 수량입니다. 계속할까요?`)) return;
+  }
+  if(id) await dbUpdate('outbound',id,rec); else await dbAdd('outbound',{id:uid('out'),...rec});
+  closeModal(); toast(id?'출고 수정 완료':'출고 등록 완료 — 코드: '+outCode(rec));
+}
+
+/* ---------- 미착품 → 상품 전환 ---------- */
+function convertModal(id){
+  const r=state.inbound.find(x=>x.id===id); if(!r) return;
+  openModal(`
+  <h3>입고완료 — 미착품 → 상품 전환</h3>
+  <div class="calc-box" style="margin-bottom:14px">
+    <span>품목: <b>${esc(r.item)} ${pct(r.purity)}</b></span><span>수량: <b>${fmt(r.qty)} kg</b></span>
+    <span>원재료인식: <b>$${fmt2(cogc(r))}</b></span><span>INVOICE: <b>${esc(r.invoice)||'-'}</b></span>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+    <div class="code-preview transit">${inCode(r)}</div><span style="font-size:20px">→</span>
+    <div class="code-preview">${inCode({...r,invType:'상품'})}</div>
+  </div>
+  <div class="form-grid">
+    <div class="fld"><label>창고입고일 (Plant ETA) *</label><input type="date" id="cv_date" value="${r.plantEta||today()}"></div>
+    <div class="fld"><label>비고</label><input type="text" id="cv_note" value=""></div>
+  </div>
+  <div class="help" style="margin-top:10px">전환 시 코드가 05 → 04로 변경되고, 수불부의 입고 및 재고에 즉시 반영됩니다. 전환 이력은 [미착품 관리] 탭에 보존됩니다.</div>
+  <div class="modal-actions">
+    <button class="btn ghost" onclick="app.closeModal()">취소</button>
+    <button class="btn green" onclick="app.doConvert('${id}')">✓ 상품 전환 확정</button>
+  </div>`);
+}
+async function doConvert(id){
+  const r=state.inbound.find(x=>x.id===id); if(!r) return;
+  const d=$('cv_date').value; if(!d){ toast('창고입고일을 입력하세요'); return; }
+  const patch={invType:'상품',plantEta:d,
+    convert:{prevCode:inCode(r),date:today(),note:$('cv_note').value},
+    note:(r.note?r.note+' / ':'')+'미착품 전환 '+today()};
+  await dbUpdate('inbound',id,patch);
+  closeModal(); toast(`상품 전환 완료: ${inCode({...r,invType:'상품'})}`);
+}
+function shipModal(id){
+  const r=state.inbound.find(x=>x.id===id); if(!r) return;
+  if(!confirm(`FOB 선적 완료 처리하시겠습니까?\n${inCode(r)} → ${inCode({...r,invType:'미착품'})}`)) return;
+  dbUpdate('inbound',id,{invType:'미착품',convertShip:{prevCode:inCode(r),date:today()}});
+  toast('미착품(05)으로 전환되었습니다');
+}
+
+/* ---------- 기타 액션 ---------- */
+function applyPeriod(){ state.period={from:$('pFrom').value,to:$('pTo').value}; render(); }
+function quickPeriod(f,t){ state.period={from:f,to:t}; render(); }
+function chartMode(m){ state.chartMode=m; render(); }
+async function loadSeed(){
+  if(state.inbound.length && !confirm('이미 데이터가 있습니다. 기존 엑셀 데이터를 추가로 불러올까요? (중복될 수 있음)')) return;
+  if(fb){ await seedToFirebase(); }
+  else{
+    state.inbound=[...state.inbound,...SEED.inbound.map(r=>({...r}))];
+    state.outbound=[...state.outbound,...SEED.outbound.map(r=>({...r}))];
+    if(!state.beginning.length) state.beginning=SEED.beginning.map(b=>({...b}));
+    state.master=state.master||SEED.master;
+    localSave(); render(); toast('기존 엑셀 데이터 불러오기 완료');
+  }
+}
+async function del(col,id){ if(confirm('삭제하시겠습니까?')) await dbDelete(col,id); }
+function setFilter(k,v){ state.filters[k]=v; render(); }
+async function setBeg(i,k,v){ state.beginning[i][k]=+v||0; await saveConfigDoc(); toast('기초재고 저장됨'); }
+async function addBuyer(){
+  const b=$('newBuyer').value.trim(); if(!b) return;
+  state.master=state.master||JSON.parse(JSON.stringify(SEED.master));
+  if(!state.master.buyers.includes(b)) state.master.buyers.push(b);
+  await saveConfigDoc(); toast('판매처 추가: '+b); render();
+}
+async function connect(){
+  let cfg; const raw=$('fbCfg').value.trim();
+  try{ cfg = JSON.parse(raw.replace(/(\w+)\s*:/g,'"$1":').replace(/'/g,'"').replace(/,\s*}/g,'}')); }
+  catch(e){ try{ cfg=JSON.parse(raw); }catch(e2){ toast('config 형식이 올바르지 않습니다. JSON을 확인하세요.'); return; } }
+  await connectFirebase(cfg);
+}
+function disconnect(){ localStorage.removeItem(CFGKEY); location.reload(); }
+function backup(){
+  const blob=new Blob([JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master},null,1)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='JNFAM_수불부_백업_'+today()+'.json'; a.click();
+}
+async function wipe(){
+  if(!confirm('모든 데이터를 삭제합니다. 계속할까요?')) return;
+  if(fb){
+    for(const col of ['inbound','outbound']){
+      const snap=await fb.getDocs(fb.collection(fb.db,col));
+      const batch=fb.writeBatch(fb.db); snap.docs.forEach(d=>batch.delete(d.ref)); await batch.commit();
+    }
+  } else { state.inbound=[];state.outbound=[];localSave(); render(); }
+  toast('전체 데이터 삭제 완료');
+}
+function exportExcel(){
+  const wb=XLSX.utils.book_new();
+  const inRows=state.inbound.map(r=>({재고구분:r.invType,코드:inCode(r),품목:r.item,함량:pct(r.purity),구매처:r.supplier,용기:r.pack,ETD:r.etd,ETA:r.eta,창고입고일:r.plantEta,'BL No.':r.bl,'INVOICE No.':r.invoice,'수량(kg)':r.qty,'단가':r.price,'금액(USD)':r.amount,해상운송료:r.freight,통관비:r.cc,관세:r.duty,운송비:r.trucking,기타비용:r.etc,'총계(운임·통관·관세)':capCost(r),'원재료인식금액':cogc(r),비고:r.note}));
+  const outRows=state.outbound.map(r=>({구분:r.category,출고코드:r.category==='충전'?'':outCode(r),품목:r.item,함량:pct(r.purity),용기:r.pack,판매처:r.buyer,출고일:r.date,'출고수량(kg)':r.qty,'출고금액(USD)':r.amount,'Shuttle':r.shuttle,비고:r.note}));
+  const L=computeLedger(); const t=ledgerTotals(L);
+  const ledRows=[];
+  L.forEach(l=>{
+    const ocs=l.outCodes.length?l.outCodes:[{code:'-',qty:'',amt:''}];
+    ocs.forEach((oc,i)=>ledRows.push({
+      'Product':i===0?l.label:'','Inbound Code':i===0?l.inCodes.join(' / '):'','Outbound Code':oc.code,
+      '기초수량':i===0?l.begQty:'','기초금액':i===0?l.begAmt:'','입고수량(04+05)':i===0?l.inQty:'','입고금액(04+05)':i===0?l.inAmt:'',
+      '출고수량':oc.qty,'출고금액':oc.amt,
+      '상품재고수량(04)':i===0?l.goodsQty:'','상품재고금액(04)':i===0?l.goodsAmt:'',
+      '미착품수량(05)':i===0?l.trQty:'','미착품금액(05)':i===0?l.trAmt:'',
+      '기말총수량':i===0?l.endQty:'','기말총금액':i===0?l.endAmt:''}));
+  });
+  ledRows.push({'Product':'합계','Inbound Code':'','Outbound Code':'','기초수량':t.begQty,'기초금액':t.begAmt,'입고수량(04+05)':t.inQty,'입고금액(04+05)':t.inAmt,'출고수량':t.outQty,'출고금액':t.outAmt,'상품재고수량(04)':t.goodsQty,'상품재고금액(04)':t.goodsAmt,'미착품수량(05)':t.trQty,'미착품금액(05)':t.trAmt,'기말총수량':t.endQty,'기말총금액':t.endAmt});
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(inRows),'상품입고');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(outRows),'상품출고');
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ledRows),'수불부');
+  XLSX.writeFile(wb,'JNFAM_수불부_'+today()+'.xlsx');
+}
+
+/* ================= 초기화 ================= */
+window.app = {inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
+  syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,setBeg,addBuyer,
+  applyPeriod,quickPeriod,chartMode,
+  loadSeed,connect,disconnect,backup,wipe,exportExcel};
+
+(async function init(){
+  const had = localLoad();
+  if(!state.master) state.master=SEED.master;
+  const cfgRaw = localStorage.getItem(CFGKEY);
+  if(cfgRaw){ try{ await connectFirebase(JSON.parse(cfgRaw), true); }catch(e){} }
+  if(!fb && DEFAULT_FB && DEFAULT_FB.projectId){ try{ await connectFirebase(DEFAULT_FB, true); }catch(e){} }
+  if(!fb && !had){
+    state.inbound=SEED.inbound.map(r=>({...r}));
+    state.outbound=SEED.outbound.map(r=>({...r}));
+    state.beginning=SEED.beginning.map(b=>({...b}));
+    state.master=SEED.master; localSave();
+  }
+  render();
+})();
+</script>
+</body>
+</html>
