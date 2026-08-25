@@ -26,6 +26,18 @@ body{background:var(--bg);color:var(--txt);font-size:14px}
 .nav-item .badge{margin-left:auto;background:var(--amber);color:#fff;font-size:11px;border-radius:10px;padding:1px 7px}
 .conn{margin:14px 20px 0;padding:8px 10px;border-radius:8px;font-size:12px;background:#1a2438}
 .conn .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}
+.conn a{color:#93c5fd;text-decoration:none;font-size:11px}
+.conn a:hover{text-decoration:underline}
+.login-gate{position:fixed;inset:0;z-index:9999;background:#101827;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-card{background:var(--card);border-radius:14px;padding:36px 34px;width:100%;max-width:400px;text-align:center;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.login-card .lg-logo{font-size:22px;font-weight:700;color:var(--txt)}
+.login-card .lg-sub{font-size:12px;color:var(--sub);margin-top:4px;letter-spacing:.4px}
+.login-card .lg-desc{font-size:13px;color:var(--sub);margin:22px 0 20px;line-height:1.6}
+.login-card .lg-btn{width:100%;justify-content:center;padding:11px 16px;font-size:14px}
+.login-card .lg-msg{margin-top:16px;font-size:13px;color:var(--red);line-height:1.6;display:none}
+.login-card .lg-msg.on{display:block}
+.login-card .lg-alt{margin-top:14px;font-size:12px;display:none}
+.login-card .lg-alt.on{display:inline-flex}
 .main{flex:1;padding:24px 28px;max-width:1560px}
 h2.page-title{font-size:20px;margin-bottom:4px}
 .page-sub{color:var(--sub);font-size:13px;margin-bottom:16px}
@@ -122,6 +134,16 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
   </nav>
   <main class="main" id="main"></main>
 </div>
+<div class="login-gate" id="loginGate" style="display:none">
+  <div class="login-card">
+    <div class="lg-logo">JNFAM 수불부</div>
+    <div class="lg-sub">Inventory Ledger System</div>
+    <div class="lg-desc">허용된 Google 계정으로 로그인해야<br>수불부 데이터를 볼 수 있습니다.</div>
+    <button class="btn primary lg-btn" onclick="app.googleLogin()">Google 계정으로 로그인</button>
+    <div class="lg-msg" id="loginMsg"></div>
+    <button class="btn ghost lg-alt" id="loginAlt" onclick="app.logout()">다른 계정으로 로그인</button>
+  </div>
+</div>
 <div class="modal-bg" id="modalBg"><div class="modal" id="modalBox"></div></div>
 <div class="toast" id="toast"></div>
 
@@ -174,29 +196,110 @@ async function saveConfigDoc(){
   else { localSave(); render(); }
 }
 
-/* ================= Firebase ================= */
+/* ================= Firebase + Google 로그인 ================= */
+const FB_URL='https://www.gstatic.com/firebasejs/10.12.2/';
+let AUM=null, auth=null, currentUser=null, unsubs=[];
+
+function setConn(kind, text, extra){
+  const el=document.getElementById('connStatus'); if(!el) return;
+  const C={ok:'#22c55e',wait:'#f59e0b',off:'#94a3b8',err:'#ef4444'};
+  el.innerHTML='<span class="dot" style="background:'+(C[kind]||'#94a3b8')+'"></span>'+text+(extra||'');
+}
+function showLogin(msg){
+  const g=document.getElementById('loginGate'); if(!g) return;
+  g.style.display='flex';
+  const m=document.getElementById('loginMsg'), a=document.getElementById('loginAlt');
+  if(msg){ m.textContent=msg; m.classList.add('on'); a.classList.add('on'); }
+  else { m.textContent=''; m.classList.remove('on'); a.classList.remove('on'); }
+}
+function hideLogin(){ const g=document.getElementById('loginGate'); if(g) g.style.display='none'; }
+
+async function googleLogin(){
+  if(!auth){ toast('Firebase가 초기화되지 않았습니다'); return; }
+  try{
+    const provider=new AUM.GoogleAuthProvider();
+    provider.setCustomParameters({prompt:'select_account'});
+    await AUM.signInWithPopup(auth, provider);
+  }catch(e){
+    if(e.code==='auth/popup-closed-by-user'||e.code==='auth/cancelled-popup-request') return;
+    showLogin('로그인 실패: '+(e.code||e.message));
+  }
+}
+async function logout(){ if(auth){ try{ await AUM.signOut(auth); }catch(e){} } }
+
+function stopListeners(){
+  unsubs.forEach(u=>{ try{ u(); }catch(e){} });
+  unsubs=[]; fb=null;
+}
+
+function startListeners(fsM, db, cfg){
+  stopListeners();
+  fb={ db, doc:fsM.doc, setDoc:fsM.setDoc, deleteDoc:fsM.deleteDoc, collection:fsM.collection, writeBatch:fsM.writeBatch, getDocs:fsM.getDocs };
+  const pending=new Set(['inbound','outbound','config']);
+  const arrived=k=>{
+    pending.delete(k);
+    if(pending.size===0){
+      setConn('ok','Firebase 연결됨<br><span style="opacity:.75">'+(currentUser?currentUser.email:(cfg.projectId||''))+'</span>',
+        '<div style="margin-top:6px"><a href="#" onclick="app.logout();return false">로그아웃</a></div>');
+    }
+  };
+  const onErr=err=>{
+    stopListeners();
+    if(err.code==='permission-denied'){
+      setConn('err','접근 권한 없음');
+      showLogin('이 계정'+(currentUser?'('+currentUser.email+')':'')+'은 접근 권한이 없습니다.\n관리자에게 계정 등록을 요청하세요.');
+    }else{
+      setConn('err','Firestore 오류: '+err.code);
+      toast('Firestore 오류: '+err.code);
+    }
+  };
+  setConn('wait','데이터 불러오는 중…');
+  ['inbound','outbound'].forEach(col=>{
+    unsubs.push(fsM.onSnapshot(fsM.collection(db,col), snap=>{
+      state[col]=snap.docs.map(d=>({id:d.id,...d.data()}));
+      arrived(col); render();
+    }, onErr));
+  });
+  unsubs.push(fsM.onSnapshot(fsM.doc(db,'config','app'), d=>{
+    if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; }
+    arrived('config'); render();
+  }, onErr));
+}
+
 async function connectFirebase(cfg, silent){
   try{
-    const appM = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
-    const fsM  = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
-    const app = appM.initializeApp(cfg);
-    const db  = fsM.getFirestore(app);
-    fb = { db, doc:fsM.doc, setDoc:fsM.setDoc, deleteDoc:fsM.deleteDoc, collection:fsM.collection, writeBatch:fsM.writeBatch, getDocs:fsM.getDocs };
-    ['inbound','outbound'].forEach(col=>{
-      fsM.onSnapshot(fsM.collection(db,col), snap=>{
-        state[col]=snap.docs.map(d=>({id:d.id,...d.data()}));
-        render();
-      }, err=>{ toast('Firestore 오류: '+err.code); });
-    });
-    fsM.onSnapshot(fsM.doc(db,'config','app'), d=>{
-      if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; }
-      render();
-    });
+    const [appM, fsM, auM] = await Promise.all([
+      import(FB_URL+'firebase-app.js'),
+      import(FB_URL+'firebase-firestore.js'),
+      import(FB_URL+'firebase-auth.js')
+    ]);
+    const app=appM.initializeApp(cfg);
+    const db =fsM.getFirestore(app);
+    AUM=auM; auth=auM.getAuth(app);
     localStorage.setItem(CFGKEY, JSON.stringify(cfg));
-    document.getElementById('connStatus').innerHTML='<span class="dot" style="background:#22c55e"></span>Firebase 연결됨 · '+(cfg.projectId||'');
-    if(!silent) toast('Firebase 연결 완료');
-    return true;
-  }catch(e){ toast('Firebase 연결 실패: '+e.message); console.error(e); return false; }
+    return await new Promise(resolve=>{
+      let settled=false;
+      auM.onAuthStateChanged(auth, user=>{
+        currentUser=user;
+        if(user){
+          hideLogin();
+          startListeners(fsM, db, cfg);
+          if(!silent) toast('로그인: '+user.email);
+        }else{
+          stopListeners();
+          state.inbound=[]; state.outbound=[];
+          setConn('off','로그인 필요');
+          showLogin(''); render();
+        }
+        if(!settled){ settled=true; resolve(true); }
+      });
+    });
+  }catch(e){
+    setConn('err','Firebase 연결 실패');
+    toast('Firebase 연결 실패: '+e.message);
+    console.error(e);
+    return false;
+  }
 }
 async function seedToFirebase(){
   if(!fb) return;
@@ -562,12 +665,14 @@ function renderSettings(){
         1. <code>console.firebase.google.com</code> → 프로젝트 선택(또는 만들기)<br>
         2. <b>빌드 → Firestore Database → 데이터베이스 만들기</b> (테스트 모드로 시작)<br>
         3. 프로젝트 설정(⚙️) → 일반 → 내 앱 → <b>웹 앱 추가(&lt;/&gt;)</b> → <code>firebaseConfig</code> 값 복사<br>
-        4. 아래에 붙여넣고 연결 → 처음이면 <b>기존 엑셀 데이터 불러오기</b> 실행
+        4. 아래에 붙여넣고 연결 → 처음이면 <b>기존 엑셀 데이터 불러오기</b> 실행<br>
+        <b>현재 로그인 계정:</b> <code>${currentUser?esc(currentUser.email):'(로그인 안 됨)'}</code> · 접근 허용 계정은 Firestore 보안 규칙에서 관리합니다.
       </div>
       <textarea id="fbCfg" rows="7" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'>${cfg?esc(cfg):''}</textarea>
       <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn primary" onclick="app.connect()">연결하기</button>
         <button class="btn ghost" onclick="app.disconnect()">연결 해제</button>
+        <button class="btn ghost" onclick="app.logout()">로그아웃</button>
       </div>
     </div>
     <div class="panel"><h3>💾 데이터</h3>
@@ -787,7 +892,7 @@ async function connect(){
   catch(e){ try{ cfg=JSON.parse(raw); }catch(e2){ toast('config 형식이 올바르지 않습니다. JSON을 확인하세요.'); return; } }
   await connectFirebase(cfg);
 }
-function disconnect(){ localStorage.removeItem(CFGKEY); location.reload(); }
+async function disconnect(){ await logout(); localStorage.removeItem(CFGKEY); location.reload(); }
 function backup(){
   const blob=new Blob([JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master},null,1)],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='JNFAM_수불부_백업_'+today()+'.json'; a.click();
@@ -829,15 +934,17 @@ function exportExcel(){
 window.app = {inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
   syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
-  loadSeed,connect,disconnect,backup,wipe,exportExcel};
+  loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout};
 
 (async function init(){
   const had = localLoad();
   if(!state.master) state.master=SEED.master;
   const cfgRaw = localStorage.getItem(CFGKEY);
-  if(cfgRaw){ try{ await connectFirebase(JSON.parse(cfgRaw), true); }catch(e){} }
-  if(!fb && DEFAULT_FB && DEFAULT_FB.projectId){ try{ await connectFirebase(DEFAULT_FB, true); }catch(e){} }
-  if(!fb && !had){
+  let ok=false;
+  if(cfgRaw){ try{ ok = await connectFirebase(JSON.parse(cfgRaw), true); }catch(e){} }
+  if(!ok && DEFAULT_FB && DEFAULT_FB.projectId){ try{ ok = await connectFirebase(DEFAULT_FB, true); }catch(e){} }
+  if(!ok) setConn('off','로컬 모드 (Firebase 연결 실패)');
+  if(!ok && !had){
     state.inbound=SEED.inbound.map(r=>({...r}));
     state.outbound=SEED.outbound.map(r=>({...r}));
     state.beginning=SEED.beginning.map(b=>({...b}));
