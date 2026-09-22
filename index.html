@@ -110,6 +110,29 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
 .upcoming-scroll thead th{position:sticky;top:0;background:var(--card);z-index:1}
 .toast{position:fixed;bottom:24px;right:24px;background:#101827;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:100;display:none}
 .help{font-size:12px;color:var(--sub);line-height:1.7}
+/* 변경 이력 */
+.hist-panel{padding:14px 18px}
+.hist-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.hist-head h3{margin:0}
+.hist-list{list-style:none;margin:0;padding:0}
+.hist-list li{display:grid;grid-template-columns:118px 150px 108px 1fr;gap:10px;align-items:center;padding:7px 2px;border-top:1px solid var(--line);font-size:13px}
+.hist-list li:first-child{border-top:none}
+.hist-time{color:var(--sub);font-size:12px;white-space:nowrap}
+.hist-user{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hist-sum{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hist-sum .chg{color:var(--sub);font-size:12px;margin-left:6px}
+@media(max-width:900px){.hist-list li{grid-template-columns:1fr 1fr}.hist-sum{grid-column:1/-1;white-space:normal}}
+.tag.h-add{background:#dbeafe;color:#1d4ed8}
+.tag.h-upd{background:#f1f5f9;color:#475569}
+.tag.h-del{background:var(--red-l);color:var(--red)}
+.tag.h-cv{background:var(--green-l);color:var(--green)}
+.tag.h-cfg{background:var(--purple-l);color:var(--purple)}
+.hist-detail{background:#f8fafc;font-size:12px;color:var(--sub)}
+.hist-detail td{padding:8px 14px}
+.hist-detail .d-row{display:inline-block;margin:2px 14px 2px 0}
+.hist-detail .d-row b{color:var(--txt)}
+.hist-detail del{color:var(--red)} .hist-detail ins{color:var(--green);text-decoration:none;font-weight:600}
+tr.hist-row{cursor:pointer} tr.hist-row:hover td{background:#f8fafc}
 .help code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11.5px}
 .mono{font-family:Consolas,monospace;font-size:12px}
 .days-late{color:var(--red);font-weight:700} .days-soon{color:var(--amber);font-weight:700}
@@ -135,6 +158,7 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
     <div class="nav-item" data-view="outbound">📤 상품출고</div>
     <div class="nav-item" data-view="transit">🚢 미착품 관리 <span class="badge" id="transitBadge" style="display:none"></span></div>
     <div class="nav-item" data-view="ledger">📒 수불부</div>
+    <div class="nav-item" data-view="history">🕘 변경 이력</div>
     <div class="nav-item" data-view="settings">⚙️ 설정</div>
     <div class="conn" id="connStatus"><span class="dot" style="background:#94a3b8"></span>로컬 모드</div>
   </nav>
@@ -160,7 +184,8 @@ const SEED = {"inbound": [{"id": "in001", "invType": "상품", "item": "HNO3", "
 <script type="module">
 /* ================= 상태 & 저장소 ================= */
 const state = { inbound:[], outbound:[], beginning:[], master:null, view:'dashboard',
-  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}}, period:{from:'',to:''}, chartMode:'amt' };
+  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}}, period:{from:'',to:''}, chartMode:'amt',
+  history:[], historyErr:'', histFilter:{user:'',action:'',q:'',from:'',to:''}, histOpen:null };
 let fb = null;
 let charts = {};
 const LSKEY='jnfam_ledger_v2', CFGKEY='jnfam_fb_config';
@@ -182,21 +207,88 @@ function localLoad(){
 function localSave(){
   localStorage.setItem(LSKEY, JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master}));
 }
+const HISTKEY='jnfam_ledger_history';
+function localHistLoad(){ try{ state.history=JSON.parse(localStorage.getItem(HISTKEY)||'[]'); }catch(e){ state.history=[]; } }
 function uid(p){ return p + Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
-async function dbAdd(col, obj){
+async function dbAdd(col, obj, action){
   if(!obj.id) obj.id = uid(col.slice(0,2));
   if(fb){ await fb.setDoc(fb.doc(fb.db,col,obj.id), obj); }
   else { state[col].push(obj); localSave(); render(); }
+  logHistory({action:action||(COL_LABEL[col]+' 등록'), kind:'add', col, docId:obj.id, rec:obj});
 }
-async function dbUpdate(col, id, patch){
+async function dbUpdate(col, id, patch, action){
+  const before = state[col].find(x=>x.id===id); const snap = before? {...before} : null;
   if(fb){ await fb.setDoc(fb.doc(fb.db,col,id), patch, {merge:true}); }
   else { const r=state[col].find(x=>x.id===id); if(r) Object.assign(r,patch); localSave(); render(); }
+  const changes = diffFields(col, snap||{}, patch);
+  const kind = /전환|선적/.test(action||'') ? 'cv' : 'upd';
+  if(changes.length || kind==='cv') logHistory({action:action||(COL_LABEL[col]+' 수정'), kind, col, docId:id, rec:{...(snap||{}),...patch}, changes});
 }
-async function dbDelete(col, id){
+async function dbDelete(col, id, action){
+  const before = state[col].find(x=>x.id===id); const snap = before? {...before} : {id};
   if(fb){ await fb.deleteDoc(fb.doc(fb.db,col,id)); }
   else { state[col]=state[col].filter(x=>x.id!==id); localSave(); render(); }
+  logHistory({action:action||(COL_LABEL[col]+' 삭제'), kind:'del', col, docId:id, rec:snap});
 }
+
+/* ================= 변경 이력 (history 컬렉션, 추가 전용) ================= */
+const COL_LABEL = {inbound:'입고', outbound:'출고', config:'설정'};
+const FIELD_LABEL = {
+  invType:'재고구분', item:'품목', purity:'함량', supplier:'구매처', pack:'용기', etd:'ETD', eta:'ETA', plantEta:'창고입고일',
+  bl:'BL', invoice:'INVOICE', qty:'수량', price:'단가', amount:'금액', freight:'해상운송료', cc:'통관비', duty:'관세',
+  trucking:'운송비', etc:'기타비용', note:'비고', manager:'담당', category:'구분', buyer:'판매처', date:'출고일', shuttle:'Shuttle'
+};
+function diffFields(col, before, patch){
+  const out=[];
+  Object.keys(patch).forEach(k=>{
+    if(k==='id'||k==='inCode') return;
+    const a=before[k], b=patch[k];
+    if((a!==null&&typeof a==='object')||(b!==null&&typeof b==='object')) return;
+    const na=(a==null?'':a), nb=(b==null?'':b);
+    if(typeof na==='number'||typeof nb==='number'){ if((+na||0)===(+nb||0)) return; }
+    else if(String(na)===String(nb)) return;
+    out.push({f:k, label:FIELD_LABEL[k]||k, from:fmtVal(k,a), to:fmtVal(k,b)});
+  });
+  return out;
+}
+function fmtVal(k,v){
+  if(v==null||v==='') return '(빈값)';
+  if(k==='purity') return pct(v);
+  if(typeof v==='number') return (['qty'].includes(k)? fmt(v) : fmt2(v));
+  return String(v);
+}
+function recSummary(col, r){
+  if(!r) return '';
+  if(col==='inbound') return `${inCode(r)} · ${fmt(r.qty)} kg${r.invoice?' · '+String(r.invoice).trim():''}`;
+  if(col==='outbound') return `${r.category==='충전'?'충전 ':''}${r.item||''} ${r.purity!=null?pct(r.purity):''} → ${r.buyer||''} · ${fmt(r.qty)} kg · ${r.date||''}`;
+  return '';
+}
+async function logHistory({action, kind, col, docId, rec, changes, summary}){
+  try{
+    const now=new Date();
+    const h={ id:uid('h'), tsMs:now.getTime(), ts:now.toISOString(),
+      user: currentUser? (currentUser.email||'') : '로컬 사용자',
+      userName: currentUser? (currentUser.displayName||'') : '',
+      action, kind:kind||'upd', col:col||'', docId:docId||'',
+      summary: summary || recSummary(col, rec),
+      changes: (changes||[]).slice(0,40) };
+    if(fb){ await fb.setDoc(fb.doc(fb.db,'history',h.id), h); }
+    else { state.history.unshift(h); state.history=state.history.slice(0,1000); try{ localStorage.setItem(HISTKEY, JSON.stringify(state.history)); }catch(e){} render(); }
+  }catch(e){ console.warn('이력 기록 실패', e); }
+}
+const userShort = h => (h.userName || (h.user||'').split('@')[0] || '-');
+function relTime(ms){
+  const d=(Date.now()-ms)/1000;
+  if(d<60) return '방금 전';
+  if(d<3600) return Math.floor(d/60)+'분 전';
+  if(d<86400) return Math.floor(d/3600)+'시간 전';
+  if(d<86400*7) return Math.floor(d/86400)+'일 전';
+  return new Date(ms).toLocaleDateString('ko-KR');
+}
+const absTime = ms => { const d=new Date(ms); const z=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${z(d.getMonth()+1)}-${z(d.getDate())} ${z(d.getHours())}:${z(d.getMinutes())}`; };
+const histTag = h => `<span class="tag h-${h.kind||'upd'}">${esc(h.action)}</span>`;
+const chgText = (h,n) => { const c=h.changes||[]; if(!c.length) return ''; const s=c.slice(0,n).map(x=>`${x.label} ${x.from}→${x.to}`).join(', '); return s+(c.length>n?` 외 ${c.length-n}건`:''); };
 async function saveConfigDoc(){
   if(fb){ await fb.setDoc(fb.doc(fb.db,'config','app'), {beginning:state.beginning, master:state.master}); }
   else { localSave(); render(); }
@@ -241,6 +333,7 @@ function stopListeners(){
 function startListeners(fsM, db, cfg){
   stopListeners();
   fb={ db, doc:fsM.doc, setDoc:fsM.setDoc, deleteDoc:fsM.deleteDoc, collection:fsM.collection, writeBatch:fsM.writeBatch, getDocs:fsM.getDocs };
+  state.history=[]; state.historyErr='';
   const pending=new Set(['inbound','outbound','config']);
   const arrived=k=>{
     pending.delete(k);
@@ -270,6 +363,15 @@ function startListeners(fsM, db, cfg){
     if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; }
     arrived('config'); render();
   }, onErr));
+  /* 변경 이력: 최근 500건 실시간 구독 — 실패해도 본 데이터 연결에는 영향 없음 */
+  unsubs.push(fsM.onSnapshot(fsM.query(fsM.collection(db,'history'), fsM.orderBy('tsMs','desc'), fsM.limit(500)), snap=>{
+    state.history=snap.docs.map(d=>({id:d.id,...d.data()})); state.historyErr=''; render();
+  }, err=>{
+    state.historyErr = err.code==='permission-denied'
+      ? 'Firestore 보안 규칙에 history 컬렉션 권한이 없습니다. (설정 탭 안내 참고)'
+      : '이력 불러오기 오류: '+err.code;
+    console.warn('history listener', err); render();
+  }));
 }
 
 async function connectFirebase(cfg, silent){
@@ -293,7 +395,7 @@ async function connectFirebase(cfg, silent){
           if(!silent) toast('로그인: '+user.email);
         }else{
           stopListeners();
-          state.inbound=[]; state.outbound=[];
+          state.inbound=[]; state.outbound=[]; state.history=[];
           setConn('off','로그인 필요');
           showLogin(''); render();
         }
@@ -429,6 +531,7 @@ function render(){
   else if(v==='outbound') renderOutbound();
   else if(v==='transit') renderTransit();
   else if(v==='ledger') renderLedger();
+  else if(v==='history') renderHistory();
   else renderSettings();
 }
 
@@ -440,6 +543,7 @@ function renderDashboard(){
   $('main').innerHTML = `
   <h2 class="page-title">대시보드</h2>
   <div class="page-sub">상품(창고 재고)과 미착품(FOB 선적~창고 입고 전)을 금액 기준으로 관리합니다 · 기준일 ${today()}</div>
+  ${recentPanel()}
   ${periodBar()}
   ${!state.inbound.length? `<div class="banner">⚠️ 데이터가 없습니다. <b>설정 → 기존 엑셀 데이터 불러오기</b>를 실행하세요. <button class="btn primary sm" onclick="app.loadSeed()">지금 불러오기</button></div>`:''}
   <div class="cards">
@@ -490,6 +594,82 @@ function renderDashboard(){
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'},
       tooltip:{callbacks:{label:c=>c.dataset.label+': '+(A?'$':'')+fmt2(c.raw)+(A?'':' kg')}}},
       scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>(A?'$':'')+fmt(v)}}}}});
+}
+
+/* ---------- 최근 업데이트 (대시보드 상단) ---------- */
+function recentPanel(){
+  const list=state.history.slice(0,5);
+  return `<div class="panel hist-panel">
+    <div class="hist-head"><h3>🕘 최근 업데이트</h3><a href="#" onclick="app.goView('history');return false" style="font-size:12px">전체 이력 보기 →</a></div>
+    ${state.historyErr? `<div class="help" style="color:var(--red)">⚠️ ${esc(state.historyErr)}</div>` :
+      list.length? `<ul class="hist-list">${list.map(h=>`<li>
+        <span class="hist-time" title="${absTime(h.tsMs)}">${relTime(h.tsMs)} · ${absTime(h.tsMs).slice(5)}</span>
+        <span class="hist-user" title="${esc(h.user)}">👤 ${esc(userShort(h))}</span>
+        <span>${histTag(h)}</span>
+        <span class="hist-sum" title="${esc(h.summary)}${h.changes&&h.changes.length?' | '+esc(chgText(h,99)):''}">${esc(h.summary)}${h.changes&&h.changes.length?`<span class="chg">${esc(chgText(h,2))}</span>`:''}</span>
+      </li>`).join('')}</ul>`
+      : '<div class="help">아직 기록된 변경 이력이 없습니다. 이번 업데이트 이후의 등록·수정·삭제부터 기록됩니다.</div>'}
+  </div>`;
+}
+
+/* ---------- 변경 이력 탭 ---------- */
+function histRows(){
+  const f=state.histFilter;
+  return state.history.filter(h=>
+    (!f.user || h.user===f.user) && (!f.action || h.action===f.action) &&
+    inRange(absTime(h.tsMs).slice(0,10), f.from, f.to) &&
+    matchQ(f.q,[h.user,h.userName,h.action,h.summary,chgText(h,99)]));
+}
+function renderHistory(){
+  const f=state.histFilter; const rows=histRows();
+  const hasF=f.user||f.action||f.q||f.from||f.to;
+  $('main').innerHTML = `
+  <h2 class="page-title">변경 이력</h2>
+  <div class="page-sub">누가 언제 무엇을 등록·수정·삭제했는지 기록합니다. 이력은 추가만 가능하며 수정·삭제되지 않습니다. (최근 500건 표시)</div>
+  ${state.historyErr?`<div class="banner">⚠️ ${esc(state.historyErr)}</div>`:''}
+  <div class="toolbar">
+    <select class="filter-sel" onchange="app.setHistFilter('user',this.value)">${optList(uniq(state.history.map(h=>h.user)),f.user,'사용자 전체')}</select>
+    <select class="filter-sel" onchange="app.setHistFilter('action',this.value)">${optList(uniq(state.history.map(h=>h.action)),f.action,'작업 전체')}</select>
+    <input type="date" value="${f.from}" onchange="app.setHistFilter('from',this.value)"> ~
+    <input type="date" value="${f.to}" onchange="app.setHistFilter('to',this.value)">
+    <input type="text" id="q_hist" class="search" placeholder="🔍 코드·INVOICE·내용 검색" value="${esc(f.q)}" oninput="app.setHistFilter('q',this.value)">
+    ${hasF?`<button class="btn ghost sm" onclick="app.resetHistFilter()">초기화</button>`:''}
+    <span class="spacer"></span>
+    <button class="btn ghost" onclick="app.exportHistory()">📄 이력 엑셀 내보내기</button>
+  </div>
+  <div class="filter-sum"><span>표시 <b>${rows.length}</b>건</span><span>행을 클릭하면 변경 상세(이전값 → 변경값)를 볼 수 있습니다</span></div>
+  <div class="panel" style="padding:0;overflow:hidden"><div class="tbl-scroll"><table>
+    <thead><tr><th>일시</th><th>사용자</th><th>작업</th><th>대상</th><th>변경 내용</th></tr></thead><tbody>
+    ${rows.length? rows.map(h=>{
+      const open=state.histOpen===h.id; const c=h.changes||[];
+      return `<tr class="hist-row" onclick="app.toggleHist('${h.id}')">
+        <td style="white-space:nowrap">${absTime(h.tsMs)}<div class="help">${relTime(h.tsMs)}</div></td>
+        <td style="white-space:nowrap"><b>${esc(userShort(h))}</b><div class="help">${esc(h.user)}</div></td>
+        <td>${histTag(h)}</td>
+        <td>${esc(h.summary)}</td>
+        <td>${c.length? esc(chgText(h,3)) : '<span class="help">-</span>'}</td></tr>
+        ${open? `<tr class="hist-detail"><td colspan="5">${c.length? c.map(x=>`<span class="d-row"><b>${esc(x.label)}</b>: <del>${esc(x.from)}</del> → <ins>${esc(x.to)}</ins></span>`).join('') : '필드 단위 변경 내역 없음'}
+          <div style="margin-top:4px">문서 ID: <code>${esc(h.col)}/${esc(h.docId)}</code></div></td></tr>`:''}`;
+    }).join('') : `<tr><td colspan="5" class="empty">${state.history.length?'조건에 맞는 이력이 없습니다':'기록된 이력이 없습니다'}</td></tr>`}
+    </tbody></table></div></div>`;
+}
+function setHistFilter(k,v){
+  state.histFilter[k]=v;
+  const ae=document.activeElement, id=ae&&ae.id, pos=ae&&ae.selectionStart;
+  render();
+  if(id){ const el=$(id); if(el){ el.focus(); try{ el.setSelectionRange(pos,pos); }catch(e){} } }
+}
+function resetHistFilter(){ state.histFilter={user:'',action:'',q:'',from:'',to:''}; render(); }
+function toggleHist(id){ state.histOpen = state.histOpen===id? null : id; render(); }
+function goView(v){
+  document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active', x.dataset.view===v));
+  state.view=v; render();
+}
+function exportHistory(){
+  const rows=histRows().map(h=>({일시:absTime(h.tsMs),사용자:h.userName||'',이메일:h.user,작업:h.action,대상:h.summary,
+    '변경 내용':(h.changes||[]).map(x=>`${x.label}: ${x.from} → ${x.to}`).join('\n'),문서ID:(h.col||'')+'/'+(h.docId||'')}));
+  const wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),'변경이력');
+  XLSX.writeFile(wb,'JNFAM_수불부_변경이력_'+today()+'.xlsx');
 }
 
 /* ---------- 검색/필터 공통 ---------- */
@@ -707,6 +887,11 @@ function renderSettings(){
         2. <b>빌드 → Firestore Database → 데이터베이스 만들기</b> (테스트 모드로 시작)<br>
         3. 프로젝트 설정(⚙️) → 일반 → 내 앱 → <b>웹 앱 추가(&lt;/&gt;)</b> → <code>firebaseConfig</code> 값 복사<br>
         4. 아래에 붙여넣고 연결 → 처음이면 <b>기존 엑셀 데이터 불러오기</b> 실행<br>
+        <b>변경 이력용 보안 규칙</b> (history 컬렉션이 거부되면 Firestore 규칙에 추가):<br>
+        <code style="display:block;white-space:pre;background:#f8fafc;padding:8px;border-radius:6px;margin:4px 0 8px;font-size:11px">match /history/{id} {
+  allow read, create: if &lt;기존 접근 허용 조건&gt;;
+  allow update, delete: if false;   // 이력은 수정·삭제 불가
+}</code>
         <b>현재 로그인 계정:</b> <code>${currentUser?esc(currentUser.email):'(로그인 안 됨)'}</code> · 접근 허용 계정은 Firestore 보안 규칙에서 관리합니다.
       </div>
       <textarea id="fbCfg" rows="7" placeholder='{"apiKey":"...","authDomain":"...","projectId":"...","storageBucket":"...","messagingSenderId":"...","appId":"..."}'>${cfg?esc(cfg):''}</textarea>
@@ -807,7 +992,7 @@ async function saveInbound(id){
     note:$('f_note').value};
   if(!rec.qty){ toast('수량을 입력하세요'); return; }
   if(rec.invType==='상품' && !rec.plantEta){ toast('상품은 창고입고일(Plant ETA)이 필요합니다'); return; }
-  if(id) await dbUpdate('inbound',id,rec); else await dbAdd('inbound',{id:uid('in'),...rec});
+  if(id) await dbUpdate('inbound',id,rec,'입고 수정'); else await dbAdd('inbound',{id:uid('in'),...rec},'입고 등록');
   closeModal(); toast(id?'입고 수정 완료':'입고 등록 완료 — 코드: '+inCode(rec));
 }
 function outboundModal(id){
@@ -860,7 +1045,7 @@ async function saveOutbound(id){
     const cur=(led?led.goodsQty:0)+(id? (+state.outbound.find(x=>x.id===id)?.qty||0):0);
     if(rec.qty>cur && !confirm(`현재 상품재고(${fmt(cur)} kg)보다 많은 수량입니다. 계속할까요?`)) return;
   }
-  if(id) await dbUpdate('outbound',id,rec); else await dbAdd('outbound',{id:uid('out'),...rec});
+  if(id) await dbUpdate('outbound',id,rec,'출고 수정'); else await dbAdd('outbound',{id:uid('out'),...rec},'출고 등록');
   closeModal(); toast(id?'출고 수정 완료':'출고 등록 완료 — 코드: '+outCode(rec));
 }
 
@@ -893,13 +1078,13 @@ async function doConvert(id){
   const patch={invType:'상품',plantEta:d,
     convert:{prevCode:inCode(r),date:today(),note:$('cv_note').value},
     note:(r.note?r.note+' / ':'')+'미착품 전환 '+today()};
-  await dbUpdate('inbound',id,patch);
+  await dbUpdate('inbound',id,patch,'입고완료(05→04)');
   closeModal(); toast(`상품 전환 완료: ${inCode({...r,invType:'상품'})}`);
 }
 function shipModal(id){
   const r=state.inbound.find(x=>x.id===id); if(!r) return;
   if(!confirm(`FOB 선적 완료 처리하시겠습니까?\n${inCode(r)} → ${inCode({...r,invType:'미착품'})}`)) return;
-  dbUpdate('inbound',id,{invType:'미착품',convertShip:{prevCode:inCode(r),date:today()}});
+  dbUpdate('inbound',id,{invType:'미착품',convertShip:{prevCode:inCode(r),date:today()}},'선적완료(00→05)');
   toast('미착품(05)으로 전환되었습니다');
 }
 
@@ -909,7 +1094,7 @@ function quickPeriod(f,t){ state.period={from:f,to:t}; render(); }
 function chartMode(m){ state.chartMode=m; render(); }
 async function loadSeed(){
   if(state.inbound.length && !confirm('이미 데이터가 있습니다. 기존 엑셀 데이터를 추가로 불러올까요? (중복될 수 있음)')) return;
-  if(fb){ await seedToFirebase(); }
+  if(fb){ await seedToFirebase(); logHistory({action:'엑셀 데이터 불러오기', kind:'add', col:'', summary:`입고 ${SEED.inbound.length} · 출고 ${SEED.outbound.length}건 일괄 업로드`}); }
   else{
     state.inbound=[...state.inbound,...SEED.inbound.map(r=>({...r}))];
     state.outbound=[...state.outbound,...SEED.outbound.map(r=>({...r}))];
@@ -918,7 +1103,7 @@ async function loadSeed(){
     localSave(); render(); toast('기존 엑셀 데이터 불러오기 완료');
   }
 }
-async function del(col,id){ if(confirm('삭제하시겠습니까?')) await dbDelete(col,id); }
+async function del(col,id){ if(confirm('삭제하시겠습니까?')) await dbDelete(col,id,COL_LABEL[col]+' 삭제'); }
 function setFilter(k,field,v){
   state.filters[k][field]=v;
   const ae=document.activeElement, id=ae&&ae.id, pos=ae&&ae.selectionStart;
@@ -929,12 +1114,17 @@ function resetFilter(k){
   state.filters[k] = k==='in' ? {type:'전체',item:'',supplier:'',q:'',from:'',to:''} : {cat:'전체',item:'',buyer:'',q:'',from:'',to:''};
   render();
 }
-async function setBeg(i,k,v){ state.beginning[i][k]=+v||0; await saveConfigDoc(); toast('기초재고 저장됨'); }
+async function setBeg(i,k,v){
+  const b=state.beginning[i]; const old=b[k]; b[k]=+v||0; await saveConfigDoc(); toast('기초재고 저장됨');
+  if((+old||0)!==b[k]) logHistory({action:'기초재고 수정', kind:'cfg', col:'config', docId:'app', summary:`${b.item} ${pct(b.purity)}`,
+    changes:[{f:k,label:k==='qty'?'기초수량':'기초금액',from:k==='qty'?fmt(old):fmt2(old),to:k==='qty'?fmt(b[k]):fmt2(b[k])}]});
+}
 async function addBuyer(){
   const b=$('newBuyer').value.trim(); if(!b) return;
   state.master=state.master||JSON.parse(JSON.stringify(SEED.master));
   if(!state.master.buyers.includes(b)) state.master.buyers.push(b);
   await saveConfigDoc(); toast('판매처 추가: '+b); render();
+  logHistory({action:'판매처 추가', kind:'cfg', col:'config', docId:'app', summary:b});
 }
 async function connect(){
   let cfg; const raw=$('fbCfg').value.trim();
@@ -956,6 +1146,7 @@ async function wipe(){
     }
   } else { state.inbound=[];state.outbound=[];localSave(); render(); }
   toast('전체 데이터 삭제 완료');
+  logHistory({action:'전체 데이터 삭제', kind:'del', col:'', summary:'입고·출고 전체 삭제'});
 }
 function exportExcel(){
   const wb=XLSX.utils.book_new();
@@ -984,10 +1175,11 @@ function exportExcel(){
 window.app = {inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
   syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,resetFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
-  loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout};
+  loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout,
+  goView,setHistFilter,resetHistFilter,toggleHist,exportHistory};
 
 (async function init(){
-  const had = localLoad();
+  const had = localLoad(); localHistLoad();
   if(!state.master) state.master=SEED.master;
   const cfgRaw = localStorage.getItem(CFGKEY);
   let ok=false;
