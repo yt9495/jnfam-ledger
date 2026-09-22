@@ -78,6 +78,10 @@ select,input[type=text],input[type=number],input[type=date],textarea{
   border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-size:13px;background:#fff;color:var(--txt);width:100%}
 select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:var(--blue)}
 .filter-sel{width:auto}
+.toolbar input.search{width:220px}
+.toolbar input[type=date]{width:140px}
+.filter-sum{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--sub);margin:-4px 0 12px 2px}
+.filter-sum b{color:var(--txt)}
 .period-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin-bottom:16px}
 .period-bar b{font-size:13px}
 .period-bar input[type=date]{width:150px}
@@ -102,6 +106,8 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
 .empty{color:var(--sub);text-align:center;padding:30px;font-size:13px}
 .banner{background:var(--amber-l);border:1px solid #fcd34d;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .tbl-scroll{overflow-x:auto}
+.upcoming-scroll{max-height:420px;overflow-y:auto}
+.upcoming-scroll thead th{position:sticky;top:0;background:var(--card);z-index:1}
 .toast{position:fixed;bottom:24px;right:24px;background:#101827;color:#fff;padding:12px 18px;border-radius:10px;font-size:13px;z-index:100;display:none}
 .help{font-size:12px;color:var(--sub);line-height:1.7}
 .help code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11.5px}
@@ -154,7 +160,7 @@ const SEED = {"inbound": [{"id": "in001", "invType": "상품", "item": "HNO3", "
 <script type="module">
 /* ================= 상태 & 저장소 ================= */
 const state = { inbound:[], outbound:[], beginning:[], master:null, view:'dashboard',
-  filters:{in:'전체', out:'전체'}, period:{from:'',to:''}, chartMode:'amt' };
+  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}}, period:{from:'',to:''}, chartMode:'amt' };
 let fb = null;
 let charts = {};
 const LSKEY='jnfam_ledger_v2', CFGKEY='jnfam_fb_config';
@@ -442,6 +448,14 @@ function renderDashboard(){
     <div class="kpi b-amber"><div class="k-label">미착품 금액 (운송 중 05)</div><div class="k-value">${money(t.trAmt||0)}</div><div class="k-sub">${fmt(t.trQty)} kg · ${L.reduce((s,l)=>s+l.trCnt,0)}건</div></div>
     <div class="kpi b-blue"><div class="k-label">구간 입고 / 출고 금액</div><div class="k-value" style="font-size:19px">${money(t.inAmt||0)} / ${money(t.outAmt||0)}</div><div class="k-sub">${periodLabel()}</div></div>
   </div>
+  <div class="panel"><h3>품목 카드 (구간: ${periodLabel()})</h3><div class="item-cards">
+    ${L.map(l=>`<div class="item-card"><div class="ic-title"><span>${esc(l.label)}</span><span style="color:var(--red)">${money(l.endAmt)}</span></div>
+      <div class="row"><span>총 재고 (04+05)</span><span class="v">${fmt(l.endQty)} kg</span></div>
+      <div class="row"><span>상품 재고 (창고)</span><span class="v" style="color:var(--green)">${money(l.goodsAmt)} · ${fmt(l.goodsQty)} kg</span></div>
+      <div class="row"><span>미착품 (운송중)</span><span class="v" style="color:var(--amber)">${money(l.trAmt)} · ${fmt(l.trQty)} kg</span></div>
+      <div class="row"><span>구간 입고 / 출고</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
+    </div>`).join('')}
+  </div></div>
   <div class="grid2">
     <div class="panel">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -453,8 +467,8 @@ function renderDashboard(){
       </div>
       <div class="chart-wrap"><canvas id="stockChart"></canvas></div>
     </div>
-    <div class="panel"><h3>🚢 입고 예정 (미착품·선적예정)</h3>
-      <div class="tbl-scroll"><table><thead><tr><th>구분</th><th>품목</th><th class="num">수량(kg)</th><th class="num">금액($)</th><th>ETA</th><th>도착까지</th><th></th></tr></thead><tbody>
+    <div class="panel"><h3>🚢 입고 예정 (미착품·선적예정) <span style="font-weight:400;color:var(--sub);font-size:12px">· ${upcoming.length}건</span></h3>
+      <div class="tbl-scroll upcoming-scroll"><table><thead><tr><th>구분</th><th>품목</th><th class="num">수량(kg)</th><th class="num">금액($)</th><th>ETA</th><th>도착까지</th><th></th></tr></thead><tbody>
       ${upcoming.length? upcoming.map(r=>{
         const dd = r.eta? Math.ceil((new Date(r.eta)-new Date(today()))/864e5) : null;
         const ddTxt = dd==null?'-': dd<0? `<span class="days-late">${-dd}일 지연</span>` : dd<=7? `<span class="days-soon">D-${dd}</span>` : 'D-'+dd;
@@ -464,14 +478,7 @@ function renderDashboard(){
       </tbody></table></div>
     </div>
   </div>
-  <div class="panel"><h3>품목 카드 (구간: ${periodLabel()})</h3><div class="item-cards">
-    ${L.map(l=>`<div class="item-card"><div class="ic-title"><span>${esc(l.label)}</span><span style="color:var(--red)">${money(l.endAmt)}</span></div>
-      <div class="row"><span>총 재고 (04+05)</span><span class="v">${fmt(l.endQty)} kg</span></div>
-      <div class="row"><span>상품 재고 (창고)</span><span class="v" style="color:var(--green)">${money(l.goodsAmt)} · ${fmt(l.goodsQty)} kg</span></div>
-      <div class="row"><span>미착품 (운송중)</span><span class="v" style="color:var(--amber)">${money(l.trAmt)} · ${fmt(l.trQty)} kg</span></div>
-      <div class="row"><span>구간 입고 / 출고</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
-    </div>`).join('')}
-  </div></div>`;
+`;
 
   const ctx=$('stockChart'); if(charts.stock) charts.stock.destroy();
   const A = mode==='amt';
@@ -485,22 +492,44 @@ function renderDashboard(){
       scales:{x:{stacked:true},y:{stacked:true,ticks:{callback:v=>(A?'$':'')+fmt(v)}}}}});
 }
 
+/* ---------- 검색/필터 공통 ---------- */
+const uniq = arr => [...new Set(arr.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b)));
+const optList = (vals,cur,allLabel) => `<option value="" ${!cur?'selected':''}>${allLabel}</option>`+vals.map(v=>`<option value="${esc(v)}" ${v===cur?'selected':''}>${esc(v)}</option>`).join('');
+const matchQ = (q,fields) => { if(!q) return true; const t=fields.map(x=>String(x??'')).join(' ').toLowerCase(); return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>t.includes(w)); };
+const inRange = (d,f,t) => (!f || (d&&d>=f)) && (!t || (d&&d<=t));
+function filterSummary(rows, hasFilter){
+  const q=rows.reduce((s,r)=>s+(+r.qty||0),0), a=rows.reduce((s,r)=>s+(+r.amount||0),0);
+  return `<div class="filter-sum"><span>${hasFilter?'검색 결과':'전체'} <b>${rows.length}</b>건</span><span>수량 합계 <b>${fmt(q)}</b> kg</span><span>금액 합계 <b>$${fmt2(a)}</b></span><span>평균 단가 <b>${q?'$'+(a/q).toFixed(3):'-'}</b>/kg</span></div>`;
+}
+
 /* ---------- 상품입고 ---------- */
 function renderInbound(){
   const f=state.filters.in;
   let rows=[...state.inbound].sort((a,b)=>(effInDate(b)||'').localeCompare(effInDate(a)||''));
-  if(f!=='전체') rows=rows.filter(r=>r.invType===f);
+  if(f.type!=='전체') rows=rows.filter(r=>r.invType===f.type);
+  if(f.item) rows=rows.filter(r=>r.item===f.item);
+  if(f.supplier) rows=rows.filter(r=>r.supplier===f.supplier);
+  if(f.from||f.to) rows=rows.filter(r=>inRange(dstr(effInDate(r)),f.from,f.to));
+  if(f.q) rows=rows.filter(r=>matchQ(f.q,[inCode(r),r.item,pct(r.purity),r.supplier,r.pack,r.invoice,r.bl,r.note,r.manager]));
+  const hasF = f.type!=='전체'||f.item||f.supplier||f.q||f.from||f.to;
   $('main').innerHTML = `
   <h2 class="page-title">상품입고 (INBOUND)</h2>
   <div class="page-sub">재고구분: 선적예정(00·미인식) → 미착품(05·FOB 선적완료) → 상품(04·창고 입고완료). 코드는 자동 생성됩니다.</div>
   <div class="toolbar">
-    <select class="filter-sel" onchange="app.setFilter('in',this.value)">
-      ${['전체','상품','미착품','선적예정(미인식)'].map(o=>`<option ${o===f?'selected':''}>${o}</option>`).join('')}
+    <select class="filter-sel" onchange="app.setFilter('in','type',this.value)">
+      ${['전체','상품','미착품','선적예정(미인식)'].map(o=>`<option ${o===f.type?'selected':''}>${o}</option>`).join('')}
     </select>
+    <select class="filter-sel" onchange="app.setFilter('in','item',this.value)">${optList(uniq(state.inbound.map(r=>r.item)),f.item,'품목 전체')}</select>
+    <select class="filter-sel" onchange="app.setFilter('in','supplier',this.value)">${optList(uniq(state.inbound.map(r=>r.supplier)),f.supplier,'구매처 전체')}</select>
+    <input type="date" value="${f.from}" title="입고일 From" onchange="app.setFilter('in','from',this.value)"> ~
+    <input type="date" value="${f.to}" title="입고일 To" onchange="app.setFilter('in','to',this.value)">
+    <input type="text" id="q_in" class="search" placeholder="🔍 코드·INVOICE·BL·비고 검색" value="${esc(f.q)}" oninput="app.setFilter('in','q',this.value)">
+    ${hasF?`<button class="btn ghost sm" onclick="app.resetFilter('in')">초기화</button>`:''}
     <span class="spacer"></span>
     <button class="btn ghost" onclick="app.exportExcel()">📄 엑셀 내보내기</button>
     <button class="btn primary" onclick="app.inboundModal()">＋ 신규 입고 등록</button>
   </div>
+  ${filterSummary(rows,hasF)}
   <div class="panel tbl-scroll"><table><thead><tr>
     <th>재고구분</th><th>코드</th><th>품목</th><th>함량</th><th>용기</th><th>ETD</th><th>ETA</th><th>창고입고일</th><th>INVOICE</th>
     <th class="num">수량(kg)</th><th class="num">단가</th><th class="num">금액($)</th><th class="num">총계*</th><th class="num">원재료인식($)</th><th></th>
@@ -514,7 +543,7 @@ function renderInbound(){
         ${r.invType==='선적예정(미인식)'?`<button class="btn sm" style="background:var(--amber-l);color:var(--amber)" onclick="app.shipModal('${r.id}')">선적완료</button> `:''}
         <button class="btn ghost sm" onclick="app.inboundModal('${r.id}')">수정</button>
         <button class="btn danger sm" onclick="app.del('inbound','${r.id}')">삭제</button></td>
-  </tr>`).join(''):'<tr><td colspan="15" class="empty">입고 데이터가 없습니다</td></tr>'}
+  </tr>`).join(''):`<tr><td colspan="15" class="empty">${hasF?'검색 조건에 맞는 입고 데이터가 없습니다':'입고 데이터가 없습니다'}</td></tr>`}
   </tbody></table>
   <div class="help" style="margin-top:8px">* 총계 = 해상운송료+통관비+관세 (원재료인식금액에 포함). 운송비·기타비용은 별도 관리.</div></div>`;
 }
@@ -523,18 +552,30 @@ function renderInbound(){
 function renderOutbound(){
   const f=state.filters.out;
   let rows=[...state.outbound].sort((a,b)=>dstr(b.date).localeCompare(dstr(a.date)));
-  if(f!=='전체') rows=rows.filter(r=>r.category===f);
+  if(f.cat!=='전체') rows=rows.filter(r=>r.category===f.cat);
+  if(f.item) rows=rows.filter(r=>r.item===f.item);
+  if(f.buyer) rows=rows.filter(r=>r.buyer===f.buyer);
+  if(f.from||f.to) rows=rows.filter(r=>inRange(dstr(r.date),f.from,f.to));
+  if(f.q) rows=rows.filter(r=>matchQ(f.q,[r.category==='충전'?'':outCode(r),r.item,pct(r.purity),r.pack,r.buyer,r.note,r.shuttle]));
+  const hasF = f.cat!=='전체'||f.item||f.buyer||f.q||f.from||f.to;
   $('main').innerHTML = `
   <h2 class="page-title">상품출고 (OUTBOUND)</h2>
   <div class="page-sub">출고 코드는 04+품목+용기+판매처+함량으로 자동 생성됩니다. '충전' 구분은 내부 이동으로 수불 계산에서 제외됩니다.</div>
   <div class="toolbar">
-    <select class="filter-sel" onchange="app.setFilter('out',this.value)">
-      ${['전체','Goods Issue','충전'].map(o=>`<option ${o===f?'selected':''}>${o}</option>`).join('')}
+    <select class="filter-sel" onchange="app.setFilter('out','cat',this.value)">
+      ${['전체','Goods Issue','충전'].map(o=>`<option ${o===f.cat?'selected':''}>${o}</option>`).join('')}
     </select>
+    <select class="filter-sel" onchange="app.setFilter('out','item',this.value)">${optList(uniq(state.outbound.map(r=>r.item)),f.item,'품목 전체')}</select>
+    <select class="filter-sel" onchange="app.setFilter('out','buyer',this.value)">${optList(uniq(state.outbound.map(r=>r.buyer)),f.buyer,'판매처 전체')}</select>
+    <input type="date" value="${f.from}" title="출고일 From" onchange="app.setFilter('out','from',this.value)"> ~
+    <input type="date" value="${f.to}" title="출고일 To" onchange="app.setFilter('out','to',this.value)">
+    <input type="text" id="q_out" class="search" placeholder="🔍 코드·판매처·비고 검색" value="${esc(f.q)}" oninput="app.setFilter('out','q',this.value)">
+    ${hasF?`<button class="btn ghost sm" onclick="app.resetFilter('out')">초기화</button>`:''}
     <span class="spacer"></span>
     <button class="btn ghost" onclick="app.exportExcel()">📄 엑셀 내보내기</button>
     <button class="btn primary" onclick="app.outboundModal()">＋ 신규 출고 등록</button>
   </div>
+  ${filterSummary(rows,hasF)}
   <div class="panel tbl-scroll"><table><thead><tr>
     <th>구분</th><th>출고코드</th><th>품목</th><th>함량</th><th>용기</th><th>판매처</th><th>출고일</th>
     <th class="num">수량(kg)</th><th class="num">금액($)</th><th class="num">단가($/kg)</th><th>비고</th><th></th>
@@ -546,7 +587,7 @@ function renderOutbound(){
     <td class="num">${r.qty? (r.amount/r.qty).toFixed(3):'-'}</td><td>${esc(r.note)||''}</td>
     <td><button class="btn ghost sm" onclick="app.outboundModal('${r.id}')">수정</button>
         <button class="btn danger sm" onclick="app.del('outbound','${r.id}')">삭제</button></td>
-  </tr>`).join(''):'<tr><td colspan="12" class="empty">출고 데이터가 없습니다</td></tr>'}
+  </tr>`).join(''):`<tr><td colspan="12" class="empty">${hasF?'검색 조건에 맞는 출고 데이터가 없습니다':'출고 데이터가 없습니다'}</td></tr>`}
   </tbody></table></div>`;
 }
 
@@ -878,7 +919,16 @@ async function loadSeed(){
   }
 }
 async function del(col,id){ if(confirm('삭제하시겠습니까?')) await dbDelete(col,id); }
-function setFilter(k,v){ state.filters[k]=v; render(); }
+function setFilter(k,field,v){
+  state.filters[k][field]=v;
+  const ae=document.activeElement, id=ae&&ae.id, pos=ae&&ae.selectionStart;
+  render();
+  if(id){ const el=$(id); if(el){ el.focus(); try{ el.setSelectionRange(pos,pos); }catch(e){} } }
+}
+function resetFilter(k){
+  state.filters[k] = k==='in' ? {type:'전체',item:'',supplier:'',q:'',from:'',to:''} : {cat:'전체',item:'',buyer:'',q:'',from:'',to:''};
+  render();
+}
 async function setBeg(i,k,v){ state.beginning[i][k]=+v||0; await saveConfigDoc(); toast('기초재고 저장됨'); }
 async function addBuyer(){
   const b=$('newBuyer').value.trim(); if(!b) return;
@@ -932,7 +982,7 @@ function exportExcel(){
 
 /* ================= 초기화 ================= */
 window.app = {inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
-  syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,setBeg,addBuyer,
+  syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,resetFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
   loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout};
 
