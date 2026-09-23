@@ -49,6 +49,15 @@ h2.page-title{font-size:20px;margin-bottom:4px}
 .kpi.b-blue{border-top:3px solid var(--blue)} .kpi.b-amber{border-top:3px solid var(--amber)}
 .kpi.b-green{border-top:3px solid var(--green)} .kpi.b-purple{border-top:3px solid var(--purple)}
 .kpi.b-red{border-top:3px solid var(--red)}
+.qty-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin-bottom:20px}
+.kpi.qty{border-top:3px solid var(--green)}
+.kpi.qty .k-label{font-size:13px;font-weight:700;color:var(--txt)}
+.kpi.qty .k-value{font-size:26px;color:var(--green)} .kpi.qty .k-value small{font-size:14px;font-weight:600;color:var(--sub);margin-left:3px}
+.kpi.qty .k-row{display:flex;justify-content:space-between;font-size:12px;color:var(--sub);margin-top:5px}
+.kpi.qty .k-row b{color:var(--txt);font-weight:600}
+.kpi.qty.neg .k-value{color:var(--red)}
+.amt-section{margin-top:8px;padding-top:18px;border-top:1px dashed var(--line)}
+.amt-section > h3{font-size:14px;color:var(--sub);margin:0 0 12px}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:20px}
 .panel h3{font-size:15px;margin-bottom:12px}
 .grid2{display:grid;grid-template-columns:1.2fr 1fr;gap:20px}
@@ -184,7 +193,7 @@ const SEED = {"inbound": [{"id": "in001", "invType": "상품", "item": "HNO3", "
 <script type="module">
 /* ================= 상태 & 저장소 ================= */
 const state = { inbound:[], outbound:[], beginning:[], master:null, view:'dashboard',
-  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}}, period:{from:'',to:''}, chartMode:'amt',
+  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}}, period:{from:'',to:''}, chartMode:'qty',
   history:[], historyErr:'', histFilter:{user:'',action:'',q:'',from:'',to:''}, histOpen:null };
 let fb = null;
 let charts = {};
@@ -542,24 +551,19 @@ function renderDashboard(){
   const mode=state.chartMode;
   $('main').innerHTML = `
   <h2 class="page-title">대시보드</h2>
-  <div class="page-sub">상품(창고 재고)과 미착품(FOB 선적~창고 입고 전)을 금액 기준으로 관리합니다 · 기준일 ${today()}</div>
+  <div class="page-sub">원재료별 상품(창고 재고) 수량 중심으로 관리합니다 · 금액 현황은 페이지 하단 · 기준일 ${today()}</div>
   ${recentPanel()}
   ${periodBar()}
   ${!state.inbound.length? `<div class="banner">⚠️ 데이터가 없습니다. <b>설정 → 기존 엑셀 데이터 불러오기</b>를 실행하세요. <button class="btn primary sm" onclick="app.loadSeed()">지금 불러오기</button></div>`:''}
-  <div class="cards">
-    <div class="kpi b-red"><div class="k-label">총 재고금액 (상품+미착품)</div><div class="k-value">${money(t.endAmt||0)}</div><div class="k-sub">${fmt(t.endQty)} kg</div></div>
-    <div class="kpi b-green"><div class="k-label">상품 재고금액 (창고 04)</div><div class="k-value">${money(t.goodsAmt||0)}</div><div class="k-sub">${fmt(t.goodsQty)} kg</div></div>
-    <div class="kpi b-amber"><div class="k-label">미착품 금액 (운송 중 05)</div><div class="k-value">${money(t.trAmt||0)}</div><div class="k-sub">${fmt(t.trQty)} kg · ${L.reduce((s,l)=>s+l.trCnt,0)}건</div></div>
-    <div class="kpi b-blue"><div class="k-label">구간 입고 / 출고 금액</div><div class="k-value" style="font-size:19px">${money(t.inAmt||0)} / ${money(t.outAmt||0)}</div><div class="k-sub">${periodLabel()}</div></div>
-  </div>
-  <div class="panel"><h3>품목 카드 (구간: ${periodLabel()})</h3><div class="item-cards">
-    ${L.map(l=>`<div class="item-card"><div class="ic-title"><span>${esc(l.label)}</span><span style="color:var(--red)">${money(l.endAmt)}</span></div>
-      <div class="row"><span>총 재고 (04+05)</span><span class="v">${fmt(l.endQty)} kg</span></div>
-      <div class="row"><span>상품 재고 (창고)</span><span class="v" style="color:var(--green)">${money(l.goodsAmt)} · ${fmt(l.goodsQty)} kg</span></div>
-      <div class="row"><span>미착품 (운송중)</span><span class="v" style="color:var(--amber)">${money(l.trAmt)} · ${fmt(l.trQty)} kg</span></div>
-      <div class="row"><span>구간 입고 / 출고</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
+  <div class="qty-cards">
+    ${L.map(l=>`<div class="kpi qty ${l.goodsQty<0?'neg':''}"><div class="k-label">${esc(l.label)} · 상품 재고</div>
+      <div class="k-value">${fmt(l.goodsQty)}<small>kg</small></div>
+      <div class="k-row"><span>미착품 (운송중)</span><b style="color:var(--amber)">${fmt(l.trQty)} kg</b></div>
+      <div class="k-row"><span>선적예정</span><b>${fmt(l.plQty)} kg</b></div>
+      <div class="k-row"><span>구간 입고</span><b style="color:var(--blue)">${fmt(l.inQty)} kg</b></div>
+      <div class="k-row"><span>구간 출고</span><b style="color:var(--blue)">${fmt(l.outQty)} kg</b></div>
     </div>`).join('')}
-  </div></div>
+  </div>
   <div class="grid2">
     <div class="panel">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -581,6 +585,22 @@ function renderDashboard(){
       }).join(''): '<tr><td colspan="7" class="empty">입고 예정 건이 없습니다</td></tr>'}
       </tbody></table></div>
     </div>
+  </div>
+  <div class="amt-section"><h3>💲 금액 현황</h3>
+  <div class="cards">
+    <div class="kpi b-red"><div class="k-label">총 재고금액 (상품+미착품)</div><div class="k-value">${money(t.endAmt||0)}</div><div class="k-sub">${fmt(t.endQty)} kg</div></div>
+    <div class="kpi b-green"><div class="k-label">상품 재고금액 (창고 04)</div><div class="k-value">${money(t.goodsAmt||0)}</div><div class="k-sub">${fmt(t.goodsQty)} kg</div></div>
+    <div class="kpi b-amber"><div class="k-label">미착품 금액 (운송 중 05)</div><div class="k-value">${money(t.trAmt||0)}</div><div class="k-sub">${fmt(t.trQty)} kg · ${L.reduce((s,l)=>s+l.trCnt,0)}건</div></div>
+    <div class="kpi b-blue"><div class="k-label">구간 입고 / 출고 금액</div><div class="k-value" style="font-size:19px">${money(t.inAmt||0)} / ${money(t.outAmt||0)}</div><div class="k-sub">${periodLabel()}</div></div>
+  </div>
+  <div class="panel"><h3>품목별 금액 (구간: ${periodLabel()})</h3><div class="item-cards">
+    ${L.map(l=>`<div class="item-card"><div class="ic-title"><span>${esc(l.label)}</span><span style="color:var(--red)">${money(l.endAmt)}</span></div>
+      <div class="row"><span>총 재고 (04+05)</span><span class="v">${fmt(l.endQty)} kg</span></div>
+      <div class="row"><span>상품 재고 (창고)</span><span class="v" style="color:var(--green)">${money(l.goodsAmt)} · ${fmt(l.goodsQty)} kg</span></div>
+      <div class="row"><span>미착품 (운송중)</span><span class="v" style="color:var(--amber)">${money(l.trAmt)} · ${fmt(l.trQty)} kg</span></div>
+      <div class="row"><span>구간 입고 / 출고</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
+    </div>`).join('')}
+  </div></div>
   </div>
 `;
 
@@ -998,6 +1018,7 @@ async function saveInbound(id){
 function outboundModal(id){
   const M=state.master||SEED.master;
   const r = id? state.outbound.find(x=>x.id===id) : {item:'HF',purity:0.49,pack:'ISO',buyer:M.buyers[0],date:today(),qty:'',amount:'',shuttle:0,category:'Goods Issue',note:''};
+  const price0 = r.price!=null && r.price!=='' ? r.price : (+r.qty && +r.amount ? +(r.amount/r.qty).toFixed(4) : '');
   openModal(`
   <h3>${id?'출고 수정':'신규 출고 등록'}</h3>
   <div class="form-grid">
@@ -1008,7 +1029,8 @@ function outboundModal(id){
     <div class="fld"><label>판매처 *</label><select id="o_buyer">${M.buyers.map(b=>`<option ${b===r.buyer?'selected':''}>${b}</option>`).join('')}</select></div>
     <div class="fld"><label>출고일 *</label><input type="date" id="o_date" value="${r.date||''}"></div>
     <div class="fld"><label>출고수량 (kg) *</label><input type="number" id="o_qty" value="${r.qty}" oninput="app.calcOut()"></div>
-    <div class="fld"><label>출고금액 ($)</label><input type="number" step="0.01" id="o_amount" value="${r.amount}" oninput="app.calcOut()"></div>
+    <div class="fld"><label>단가 ($/kg)</label><input type="number" step="0.001" id="o_price" value="${price0}" oninput="app.calcOut()" placeholder="예: 2.550"></div>
+    <div class="fld"><label>출고금액 ($) <span style="font-weight:400;color:var(--sub)">· 자동계산</span></label><input type="number" step="0.01" id="o_amount" value="${r.amount}" readonly style="background:#f8fafc"></div>
     <div class="fld"><label>Shuttle cost</label><input type="number" step="0.01" id="o_shuttle" value="${r.shuttle||0}"></div>
     <div class="fld full"><label>비고</label><input type="text" id="o_note" value="${esc(r.note)}"></div>
     <div class="full"><label style="font-size:12px;color:var(--sub);font-weight:600">자동 생성 출고코드</label><div class="code-preview" id="codePreviewOut"></div></div>
@@ -1018,7 +1040,8 @@ function outboundModal(id){
     <button class="btn ghost" onclick="app.closeModal()">취소</button>
     <button class="btn primary" onclick="app.saveOutbound('${id||''}')">저장</button>
   </div>`);
-  ['o_item','o_purity','o_pack','o_buyer','o_category'].forEach(fid=>$(fid).addEventListener('change',calcOut));
+  ['o_item','o_purity','o_pack','o_buyer','o_category'].forEach(fid=>$(fid).addEventListener('change',()=>{ if(!id) prefillPrice(); calcOut(); }));
+  if(!id) prefillPrice();
   calcOut();
 }
 function syncPurityOut(){
@@ -1027,17 +1050,28 @@ function syncPurityOut(){
   $('o_purity').innerHTML=ps.map(p=>`<option value="${p}">${pct(p)}</option>`).join('');
   calcOut();
 }
+/* 신규 출고: 같은 품목·함량·판매처의 최근 단가를 기본값으로 */
+function prefillPrice(){
+  const el=$('o_price'); if(el.dataset.touched) return;
+  const it=$('o_item').value, pu=+$('o_purity').value, by=$('o_buyer').value;
+  const last=[...state.outbound].filter(r=>r.item===it&&+r.purity===+pu&&r.buyer===by&&+r.qty>0&&+r.amount>0)
+    .sort((a,b)=>dstr(b.date).localeCompare(dstr(a.date)))[0];
+  el.value = last ? (last.price!=null&&last.price!=='' ? last.price : +(last.amount/last.qty).toFixed(4)) : '';
+}
 function calcOut(){
   const r={item:$('o_item').value,purity:+$('o_purity').value,pack:$('o_pack').value,buyer:$('o_buyer').value};
   $('codePreviewOut').textContent = $('o_category').value==='충전' ? '(충전 — 수불 제외)' : outCode(r);
-  const q=+$('o_qty').value||0,a=+$('o_amount').value||0;
+  if(document.activeElement && document.activeElement.id==='o_price') $('o_price').dataset.touched='1';
+  const q=+$('o_qty').value||0, pr=+$('o_price').value||0;
+  const a = q>0 ? Math.round(q*pr*100)/100 : 0;   // 음수(실계근량 차이 등)는 금액 0
+  $('o_amount').value = (q||pr) ? a.toFixed(2) : '';
   const led=computeLedger().find(l=>l.item===r.item&&+l.purity===+r.purity);
   const stock=led?led.goodsQty:0;
-  $('calcBoxOut').innerHTML=`<span>단가: <b>${q?(a/q).toFixed(3):'-'} $/kg</b></span><span>현재 상품재고: <b>${fmt(stock)} kg</b></span><span>출고 후: <b style="color:${stock-q<0?'var(--red)':'var(--green)'}">${fmt(stock-q)} kg</b></span>`;
+  $('calcBoxOut').innerHTML=`<span>금액: <b>${q>0&&pr? '$'+fmt2(a) : q<0? '$0.00 (음수 수량)' : '-'}</b></span><span>현재 상품재고: <b>${fmt(stock)} kg</b></span><span>출고 후: <b style="color:${stock-q<0?'var(--red)':'var(--green)'}">${fmt(stock-q)} kg</b></span>`;
 }
 async function saveOutbound(id){
   const rec={category:$('o_category').value,item:$('o_item').value,purity:+$('o_purity').value,pack:$('o_pack').value,buyer:$('o_buyer').value,
-    date:$('o_date').value,qty:+$('o_qty').value||0,amount:+$('o_amount').value||0,shuttle:+$('o_shuttle').value||0,
+    date:$('o_date').value,qty:+$('o_qty').value||0,price:+$('o_price').value||0,amount:+$('o_amount').value||0,shuttle:+$('o_shuttle').value||0,
     note:$('o_note').value,inCode:''};
   if(!rec.qty||!rec.date){ toast('출고일과 수량을 입력하세요'); return; }
   if(rec.category!=='충전'){
@@ -1151,7 +1185,7 @@ async function wipe(){
 function exportExcel(){
   const wb=XLSX.utils.book_new();
   const inRows=state.inbound.map(r=>({재고구분:r.invType,코드:inCode(r),품목:r.item,함량:pct(r.purity),구매처:r.supplier,용기:r.pack,ETD:r.etd,ETA:r.eta,창고입고일:r.plantEta,'BL No.':r.bl,'INVOICE No.':r.invoice,'수량(kg)':r.qty,'단가':r.price,'금액(USD)':r.amount,해상운송료:r.freight,통관비:r.cc,관세:r.duty,운송비:r.trucking,기타비용:r.etc,'총계(운임·통관·관세)':capCost(r),'원재료인식금액':cogc(r),비고:r.note}));
-  const outRows=state.outbound.map(r=>({구분:r.category,출고코드:r.category==='충전'?'':outCode(r),품목:r.item,함량:pct(r.purity),용기:r.pack,판매처:r.buyer,출고일:r.date,'출고수량(kg)':r.qty,'출고금액(USD)':r.amount,'Shuttle':r.shuttle,비고:r.note}));
+  const outRows=state.outbound.map(r=>({구분:r.category,출고코드:r.category==='충전'?'':outCode(r),품목:r.item,함량:pct(r.purity),용기:r.pack,판매처:r.buyer,출고일:r.date,'출고수량(kg)':r.qty,'단가($/kg)':r.qty?+(r.amount/r.qty).toFixed(4):'','출고금액(USD)':r.amount,'Shuttle':r.shuttle,비고:r.note}));
   const L=computeLedger(); const t=ledgerTotals(L);
   const ledRows=[];
   L.forEach(l=>{
