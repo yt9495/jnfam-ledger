@@ -781,7 +781,7 @@ function renderOutbound(){
     <th class="num">수량(kg)</th><th class="num">금액($)</th><th class="num">단가($/kg)</th><th>비고</th><th></th>
   </tr></thead><tbody>
   ${rows.length? rows.map(r=>`<tr>
-    <td>${invTag(r.category)}</td><td class="mono">${r.category==='충전'?'-':outCode(r)}</td><td>${esc(r.item)}</td><td>${pct(r.purity)}</td>
+    <td>${invTag(r.category)}${r.src==='inventory'?' <span class="tag ok" title="재고 현황 시스템 출하에서 자동 등록된 출고">재고현황</span>':''}</td><td class="mono">${r.category==='충전'?'-':outCode(r)}</td><td>${esc(r.item)}</td><td>${pct(r.purity)}</td>
     <td>${esc(r.pack)}</td><td>${esc(r.buyer)||'-'}</td><td>${r.date||'-'}</td>
     <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(r.amount)}</td>
     <td class="num">${r.qty? (r.amount/r.qty).toFixed(3):'-'}</td><td>${esc(r.note)||''}</td>
@@ -1021,6 +1021,8 @@ function outboundModal(id){
   const price0 = r.price!=null && r.price!=='' ? r.price : (+r.qty && +r.amount ? +(r.amount/r.qty).toFixed(4) : '');
   openModal(`
   <h3>${id?'출고 수정':'신규 출고 등록'}</h3>
+  ${r.src==='inventory'?'<div class="banner" style="margin-bottom:12px">재고 현황 시스템 출하에서 자동 등록된 출고입니다. <b>수량·출고일·판매처</b>는 재고 현황에서 수정해야 양쪽이 맞습니다 (여기서 바꾸면 재고 현황에는 반영되지 않음). 단가·Shuttle·비고 수정은 괜찮습니다.</div>':''}
+  ${!id?'<div class="banner" style="margin-bottom:12px">고객 출하는 <b>재고 현황 시스템</b>에서 Lot과 함께 등록하면 수불부 출고가 자동 생성됩니다. 여기서 직접 등록하면 재고 현황의 Lot 재고는 차감되지 않습니다.</div>':''}
   <div class="form-grid">
     <div class="fld"><label>구분</label><select id="o_category">${['Goods Issue','충전'].map(c=>`<option ${c===r.category?'selected':''}>${c}</option>`).join('')}</select></div>
     <div class="fld"><label>품목 *</label><select id="o_item" onchange="app.syncPurityOut()">${M.items.map(i=>`<option ${i.name===r.item?'selected':''}>${i.name}</option>`).join('')}</select></div>
@@ -1137,7 +1139,13 @@ async function loadSeed(){
     localSave(); render(); toast('기존 엑셀 데이터 불러오기 완료');
   }
 }
-async function del(col,id){ if(confirm('삭제하시겠습니까?')) await dbDelete(col,id,COL_LABEL[col]+' 삭제'); }
+async function del(col,id){
+  const r=col==='outbound'?state.outbound.find(x=>x.id===id):null;
+  const msg=r&&r.src==='inventory'
+    ? '재고 현황 시스템의 출하와 연동된 출고입니다.\n여기서 삭제하면 재고 현황의 출하 기록(Lot 차감)은 그대로 남습니다.\n출하 자체를 취소하려면 재고 현황에서 출하 기록을 삭제하세요 (수불부도 자동 삭제).\n\n그래도 수불부에서만 삭제할까요?'
+    : '삭제하시겠습니까?';
+  if(confirm(msg)) await dbDelete(col,id,COL_LABEL[col]+' 삭제');
+}
 function setFilter(k,field,v){
   state.filters[k][field]=v;
   const ae=document.activeElement, id=ae&&ae.id, pos=ae&&ae.selectionStart;
