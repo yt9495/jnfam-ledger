@@ -1103,6 +1103,7 @@ function convertModal(id){
     <div class="fld"><label>비고</label><input type="text" id="cv_note" value=""></div>
   </div>
   <div class="help" style="margin-top:10px">전환 시 코드가 05 → 04로 변경되고, 수불부의 입고 및 재고에 즉시 반영됩니다. 전환 이력은 [미착품 관리] 탭에 보존됩니다.</div>
+  <div class="banner" style="margin-top:10px">💡 창고 입고는 <b>재고 현황 시스템 › 입고 예정 › 입고 등록</b>에서 하면 Lot 등록과 수불부 전환이 한 번에 됩니다. 여기서 전환하면 재고 현황에서 <b>Lot을 따로 등록</b>해야 합니다 (재고 현황 대시보드에 “Lot 미등록”으로 표시).</div>
   <div class="modal-actions">
     <button class="btn ghost" onclick="app.closeModal()">취소</button>
     <button class="btn green" onclick="app.doConvert('${id}')">✓ 상품 전환 확정</button>
