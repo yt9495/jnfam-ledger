@@ -1086,8 +1086,23 @@ async function saveOutbound(id){
 }
 
 /* ---------- 미착품 → 상품 전환 ---------- */
-function convertModal(id){
+/* 창고 입고는 재고 현황 시스템에서 처리 (Lot 등록 + 부분 입고 + 수불부 자동 전환) — 여기서는 경고 후 예외적으로만 전환 */
+const INV_URL='https://yt9495.github.io/jnfam-inventory/';
+function convertModal(id,force){
   const r=state.inbound.find(x=>x.id===id); if(!r) return;
+  if(!force){ openModal(`
+  <h3>⚠️ 입고완료는 재고 현황 시스템에서 처리하세요</h3>
+  <div class="calc-box" style="margin-bottom:14px"><span>품목: <b>${esc(r.item)} ${pct(r.purity)}</b></span><span>수량: <b>${fmt(r.qty)} kg</b></span><span>INVOICE: <b>${esc(r.invoice)||'-'}</b></span></div>
+  <div class="banner" style="margin-bottom:12px;line-height:1.7">창고 입고는 <b>재고 현황 시스템 › 입고 예정 › 입고 등록</b>에서 처리합니다.<br>
+    · Lot 번호·IBC 수량이 재고에 등록되고<br>
+    · 컨테이너 일부만 도착한 경우 <b>부분 입고</b>로 남은 수량이 운송중으로 유지되며<br>
+    · 전량 입고되면 이 수불부 건이 <b>자동으로 상품(04) 전환</b>됩니다.<br>
+    여기서 전환하면 재고 현황에 Lot이 생기지 않고, 부분 입고 중이면 남은 컨테이너가 운송중에서 빠집니다.</div>
+  <div class="modal-actions">
+    <button class="btn ghost" style="margin-right:auto" onclick="if(confirm('재고 현황 시스템을 거치지 않고 수불부에서만 전환합니다.\\n재고 현황에서는 Lot을 따로 등록해야 합니다. 계속할까요?')) app.convertModal('${id}',true)">그래도 수불부에서 전환</button>
+    <button class="btn ghost" onclick="app.closeModal()">취소</button>
+    <a class="btn green" href="${INV_URL}" target="_blank" rel="noopener" onclick="app.closeModal()" style="text-decoration:none">재고 현황에서 처리하기 ↗</a>
+  </div>`); return; }
   openModal(`
   <h3>입고완료 — 미착품 → 상품 전환</h3>
   <div class="calc-box" style="margin-bottom:14px">
