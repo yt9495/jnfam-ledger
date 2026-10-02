@@ -210,11 +210,11 @@ const DEFAULT_FB = {
 
 function localLoad(){
   const raw = localStorage.getItem(LSKEY);
-  if(raw){ try{ const d=JSON.parse(raw); Object.assign(state,{inbound:d.inbound||[],outbound:d.outbound||[],beginning:d.beginning||[],master:d.master||SEED.master}); return true; }catch(e){} }
+  if(raw){ try{ const d=JSON.parse(raw); Object.assign(state,{inbound:d.inbound||[],outbound:d.outbound||[],beginning:d.beginning||[],master:d.master||SEED.master,checks:d.checks||{}}); return true; }catch(e){} }
   return false;
 }
 function localSave(){
-  localStorage.setItem(LSKEY, JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master}));
+  localStorage.setItem(LSKEY, JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master,checks:state.checks||{}}));
 }
 const HISTKEY='jnfam_ledger_history';
 function localHistLoad(){ try{ state.history=JSON.parse(localStorage.getItem(HISTKEY)||'[]'); }catch(e){ state.history=[]; } }
@@ -299,7 +299,7 @@ const absTime = ms => { const d=new Date(ms); const z=n=>String(n).padStart(2,'0
 const histTag = h => `<span class="tag h-${h.kind||'upd'}">${esc(h.action)}</span>`;
 const chgText = (h,n) => { const c=h.changes||[]; if(!c.length) return ''; const s=c.slice(0,n).map(x=>`${x.label} ${x.from}→${x.to}`).join(', '); return s+(c.length>n?` 외 ${c.length-n}건`:''); };
 async function saveConfigDoc(){
-  if(fb){ await fb.setDoc(fb.doc(fb.db,'config','app'), {beginning:state.beginning, master:state.master}); }
+  if(fb){ await fb.setDoc(fb.doc(fb.db,'config','app'), {beginning:state.beginning, master:state.master}, {merge:true}); }
   else { localSave(); render(); }
 }
 
@@ -341,7 +341,7 @@ function stopListeners(){
 
 function startListeners(fsM, db, cfg){
   stopListeners();
-  fb={ db, doc:fsM.doc, setDoc:fsM.setDoc, deleteDoc:fsM.deleteDoc, collection:fsM.collection, writeBatch:fsM.writeBatch, getDocs:fsM.getDocs };
+  fb={ db, doc:fsM.doc, setDoc:fsM.setDoc, deleteField:fsM.deleteField, deleteDoc:fsM.deleteDoc, collection:fsM.collection, writeBatch:fsM.writeBatch, getDocs:fsM.getDocs };
   state.history=[]; state.historyErr='';
   const pending=new Set(['inbound','outbound','config']);
   const arrived=k=>{
@@ -369,7 +369,7 @@ function startListeners(fsM, db, cfg){
     }, onErr));
   });
   unsubs.push(fsM.onSnapshot(fsM.doc(db,'config','app'), d=>{
-    if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; }
+    if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; state.checks=c.checks||{}; }
     arrived('config'); render();
   }, onErr));
   /* 변경 이력: 최근 500건 실시간 구독 — 실패해도 본 데이터 연결에는 영향 없음 */
@@ -580,66 +580,115 @@ function ledgerTotals(L){
   return L.reduce((a,l)=>{ K.forEach(k=>a[k]=(a[k]||0)+(l[k]||0)); return a; },{});
 }
 
-/* ================= 데이터 점검 ================= */
-function dataChecks(){
-  const W=[]; const t=today();
-  const noEtd = state.inbound.filter(r=>r.invType==='미착품' && !shipD(r));
-  if(noEtd.length) W.push(`ETD 없는 미착품 <b>${noEtd.length}건</b> — 재고로 인식되지 않음 (선적 완료면 ETD 입력, 아니면 선적예정으로 변경): ${noEtd.map(r=>esc(r.invoice||r.item)).join(', ')}`);
-  if(costBasis!=='price'){
-    const noFr = state.inbound.filter(r=>r.invType==='상품' && !(+r.freight) && !(+r.cc) && !(+r.duty));
-    if(noFr.length) W.push(`창고 입고된 상품 중 운임·통관비·관세가 0인 건 <b>${noFr.length}건</b> (${fmt(noFr.reduce((s,r)=>s+(+r.qty||0),0))} kg) — 원가가 낮게 잡힘: ${noFr.slice(0,8).map(r=>esc(r.invoice)).join(', ')}${noFr.length>8?' 외':''}`);
-  }
-  const bad = state.inbound.filter(r=>r.invType==='상품' && dstr(r.etd) && dstr(r.plantEta) && r.etd>r.plantEta);
-  if(bad.length) W.push(`ETD가 창고입고일보다 늦은 입고 <b>${bad.length}건</b>: ${bad.map(r=>esc(r.invoice)).join(', ')}`);
+/* ================= 데이터 점검 (확인 → 비고 → Close) =================
+   점검 항목은 건(또는 중복 묶음)별 key로 관리. Close 하면 config/app.checks[key]에 {memo,by,at} 저장 → 목록에서 숨김.
+   데이터를 고쳐서 조건이 사라진 항목은 자동으로 없어짐. */
+const CHK_CAT = {
+  noetd:  {label:'ETD 없는 미착품', act:'선적 완료면 ETD 입력, 아니면 선적예정으로 변경'},
+  nofr:   {label:'운임·통관비·관세 미입력 (창고 입고 상품)', act:'포워더 인보이스 확인 후 입력 — 미입력 시 원가가 낮게 잡힘'},
+  date:   {label:'ETD가 창고입고일보다 늦음', act:'날짜 확인'},
+  dupinv: {label:'같은 품목 INVOICE 번호 중복', act:'오타 또는 중복 등록 확인'},
+  dupout: {label:'동일 내용 출고 중복 의심', act:'중복이면 1건 삭제'},
+  future: {label:'오늘 이후 날짜 출고', act:'출하 예정이면 출하 후 등록 / 날짜 확인 — 구간 종료일을 비우면 출고된 것으로 계산됨'},
+  adj:    {label:'재고조정이 판매로 등록', act:'수량 차감은 맞지만 매출로 집계됨 — 재고조정으로 처리'},
+  price:  {label:'판매단가 이상치', act:'금액·수량 확인'}
+};
+function checkItems(){
+  const I=[]; const t=today();
+  const add=(cat,kind,recs,desc)=>I.push({key:cat+'_'+recs.map(r=>r.id).sort().join('_'), cat, kind, recs, desc});
+  const inDesc = r => `${esc(r.invoice||'-')} · ${esc(r.item)} ${pct(r.purity)} · ${fmt(r.qty)} kg · ETD ${r.etd||'-'} · 입고 ${r.plantEta||'-'}`;
+  const outDesc = r => `${esc(r.buyer||'-')} · ${r.date||'-'} · ${esc(r.item)} ${pct(r.purity)} ${esc(r.pack||'')} · ${fmt(r.qty)} kg · $${fmt2(r.amount)}`;
+  state.inbound.filter(r=>r.invType==='미착품' && !shipD(r)).forEach(r=>add('noetd','in',[r],inDesc(r)));
+  if(costBasis!=='price') state.inbound.filter(r=>r.invType==='상품' && !(+r.freight) && !(+r.cc) && !(+r.duty)).forEach(r=>add('nofr','in',[r],inDesc(r)));
+  state.inbound.filter(r=>r.invType==='상품' && dstr(r.etd) && dstr(r.plantEta) && r.etd>r.plantEta).forEach(r=>add('date','in',[r],inDesc(r)));
   const invMap={}; state.inbound.forEach(r=>{ if(!r.invoice) return; const k=r.invoice+'|'+r.item+'|'+r.purity; (invMap[k]=invMap[k]||[]).push(r); });
-  const dupInv=Object.values(invMap).filter(a=>a.length>1);
-  if(dupInv.length) W.push(`같은 품목에 INVOICE 번호 중복 <b>${dupInv.length}건</b>: ${dupInv.map(a=>esc(a[0].invoice)+' ('+a.map(r=>r.plantEta||r.etd||'-').join(', ')+')').join(' · ')}`);
+  Object.values(invMap).filter(a=>a.length>1).forEach(a=>add('dupinv','in',a,`${esc(a[0].invoice)} · ${esc(a[0].item)} ${pct(a[0].purity)} · 입고일 ${a.map(r=>r.plantEta||r.etd||'-').join(', ')}`));
   const og={}; state.outbound.filter(r=>r.category!=='충전' && (+r.qty)>0).forEach(r=>{ const k=[r.item,r.purity,r.pack,r.buyer,r.date,r.qty,r.amount].join('|'); (og[k]=og[k]||[]).push(r); });
-  const dupOut=Object.values(og).filter(a=>a.length>1);
-  if(dupOut.length) W.push(`동일 내용 출고 중복 의심 <b>${dupOut.length}건</b>: ${dupOut.map(a=>`${esc(a[0].buyer)} ${a[0].date} ${esc(a[0].item)} ${fmt(a[0].qty)}kg ×${a.length}`).join(' · ')}`);
-  const fut = state.outbound.filter(r=>r.category!=='충전' && dstr(r.date) > t);
-  if(fut.length) W.push(`오늘(${t}) 이후 날짜로 등록된 출고 <b>${fut.length}건</b> (${fmt(fut.reduce((s,r)=>s+(+r.qty||0),0))} kg) — 구간 종료일을 비우면 이미 출고된 것으로 계산됨`);
-  const adj = state.outbound.filter(r=>r.category!=='충전' && /실사|조정/.test((r.buyer||'')));
-  if(adj.length) W.push(`판매처가 재고조정으로 등록된 출고 <b>${adj.length}건</b> (${adj.map(r=>esc(r.buyer)+' '+fmt(r.qty)+'kg').join(', ')}) — 수량 차감은 맞지만 매출로 집계됨`);
-  const pg={}; state.outbound.filter(r=>r.category!=='충전' && (+r.qty)>0 && (+r.amount)>0).forEach(r=>{ const k=[r.item,r.purity,r.pack,r.buyer].join('|'); (pg[k]=pg[k]||[]).push(r); });
-  const odd=[]; Object.values(pg).forEach(a=>{ if(a.length<3) return; const p=a.map(r=>r.amount/r.qty).sort((x,y)=>x-y); const med=p[Math.floor(p.length/2)];
-    a.forEach(r=>{ const u=r.amount/r.qty; if(u>med*2||u<med/2) odd.push(`${esc(r.buyer)} ${r.date} ${esc(r.item)} ${fmt(r.qty)}kg $${u.toFixed(2)}/kg (보통 $${med.toFixed(2)})`); }); });
-  if(odd.length) W.push(`판매단가 이상치 <b>${odd.length}건</b>: ${odd.join(' · ')}`);
-  return W;
-}
-/* 데이터 점검 상세 (엑셀용 행 단위) */
-function checkRows(){
-  const R=[]; const t=today();
-  const inRow=(cat,r,msg)=>R.push({점검항목:cat,구분:'입고',재고구분:r.invType,'INVOICE / 판매처':r.invoice||'',품목:r.item+' '+pct(r.purity),ETD:r.etd||'',창고입고일:r.plantEta||'',출고일:'','수량(kg)':+r.qty||0,'금액(USD)':+r.amount||0,조치:msg});
-  const outRow=(cat,r,msg)=>R.push({점검항목:cat,구분:'출고',재고구분:r.category,'INVOICE / 판매처':r.buyer||'',품목:r.item+' '+pct(r.purity),ETD:'',창고입고일:'',출고일:r.date||'','수량(kg)':+r.qty||0,'금액(USD)':+r.amount||0,조치:msg});
-  state.inbound.filter(r=>r.invType==='미착품' && !shipD(r)).forEach(r=>inRow('ETD 없는 미착품',r,'선적 완료면 ETD 입력, 아니면 선적예정으로 변경'));
-  if(costBasis!=='price') state.inbound.filter(r=>r.invType==='상품' && !(+r.freight) && !(+r.cc) && !(+r.duty)).forEach(r=>inRow('운임·통관비·관세 미입력',r,'포워더 인보이스 확인 후 입력'));
-  state.inbound.filter(r=>r.invType==='상품' && dstr(r.etd) && dstr(r.plantEta) && r.etd>r.plantEta).forEach(r=>inRow('ETD가 창고입고일보다 늦음',r,'날짜 확인'));
-  const invMap={}; state.inbound.forEach(r=>{ if(!r.invoice) return; const k=r.invoice+'|'+r.item+'|'+r.purity; (invMap[k]=invMap[k]||[]).push(r); });
-  Object.values(invMap).filter(a=>a.length>1).forEach(a=>a.forEach(r=>inRow('INVOICE 번호 중복',r,'오타 또는 중복 등록 확인')));
-  const og={}; state.outbound.filter(r=>r.category!=='충전' && (+r.qty)>0).forEach(r=>{ const k=[r.item,r.purity,r.pack,r.buyer,r.date,r.qty,r.amount].join('|'); (og[k]=og[k]||[]).push(r); });
-  Object.values(og).filter(a=>a.length>1).forEach(a=>a.forEach(r=>outRow('출고 중복 의심',r,'중복이면 1건 삭제')));
-  state.outbound.filter(r=>r.category!=='충전' && dstr(r.date)>t).forEach(r=>outRow('오늘 이후 날짜 출고',r,'출하 예정이면 출하 후 등록 / 날짜 확인'));
-  state.outbound.filter(r=>r.category!=='충전' && /실사|조정/.test(r.buyer||'')).forEach(r=>outRow('재고조정이 판매로 등록',r,'매출이 아닌 재고조정으로 처리'));
+  Object.values(og).filter(a=>a.length>1).forEach(a=>add('dupout','out',a,outDesc(a[0])+` × ${a.length}건`));
+  state.outbound.filter(r=>r.category!=='충전' && dstr(r.date)>t).forEach(r=>add('future','out',[r],outDesc(r)));
+  state.outbound.filter(r=>r.category!=='충전' && /실사|조정/.test(r.buyer||'')).forEach(r=>add('adj','out',[r],outDesc(r)));
   const pg={}; state.outbound.filter(r=>r.category!=='충전' && (+r.qty)>0 && (+r.amount)>0).forEach(r=>{ const k=[r.item,r.purity,r.pack,r.buyer].join('|'); (pg[k]=pg[k]||[]).push(r); });
   Object.values(pg).forEach(a=>{ if(a.length<3) return; const p=a.map(r=>r.amount/r.qty).sort((x,y)=>x-y); const med=p[Math.floor(p.length/2)];
-    a.forEach(r=>{ const u=r.amount/r.qty; if(u>med*2||u<med/2) outRow('판매단가 이상치',r,`단가 $${u.toFixed(2)}/kg (보통 $${med.toFixed(2)}) — 금액·수량 확인`); }); });
-  return R;
+    a.forEach(r=>{ const u=r.amount/r.qty; if(u>med*2||u<med/2) add('price','out',[r],outDesc(r)+` · $${u.toFixed(2)}/kg (보통 $${med.toFixed(2)})`); }); });
+  const C=state.checks||{};
+  I.forEach(it=>{ it.closed=C[it.key]||null; });
+  return I;
 }
-function exportChecks(){
-  const R=checkRows(); if(!R.length){ toast('점검 항목이 없습니다'); return; }
-  const wb=XLSX.utils.book_new();
-  const sum={}; R.forEach(r=>{ const s=sum[r.점검항목]||(sum[r.점검항목]={점검항목:r.점검항목,건수:0,'수량 합계(kg)':0}); s.건수++; s['수량 합계(kg)']+=r['수량(kg)']; });
-  const ws1=XLSX.utils.json_to_sheet([{점검항목:'점검일',건수:today()},{점검항목:'원가 기준',건수:basisLabel()},{},...Object.values(sum)]); ws1['!cols']=[{wch:28},{wch:22},{wch:16}];
-  const ws2=XLSX.utils.json_to_sheet(R); ws2['!cols']=[{wch:24},{wch:6},{wch:10},{wch:18},{wch:14},{wch:11},{wch:11},{wch:11},{wch:11},{wch:12},{wch:44}];
-  XLSX.utils.book_append_sheet(wb,ws1,'요약'); XLSX.utils.book_append_sheet(wb,ws2,'점검상세');
-  XLSX.writeFile(wb,'JNFAM_수불부_데이터점검_'+today()+'.xlsx');
+/* 엑셀 '기준·점검' 시트용 요약 (미종료 항목만) */
+function dataChecks(){
+  const open=checkItems().filter(i=>!i.closed); const by={};
+  open.forEach(i=>{ (by[i.cat]=by[i.cat]||[]).push(i); });
+  return Object.entries(by).map(([c,a])=>`${CHK_CAT[c].label} ${a.length}건 — ${CHK_CAT[c].act}`);
+}
+async function saveChecks(patch){
+  state.checks = Object.assign({}, state.checks||{}, patch);
+  Object.keys(patch).forEach(k=>{ if(patch[k]===null) delete state.checks[k]; });
+  if(fb){
+    const v={}; Object.entries(patch).forEach(([k,x])=>v[k]= x===null ? fb.deleteField() : x);
+    await fb.setDoc(fb.doc(fb.db,'config','app'), {checks:v}, {merge:true});
+  } else { localSave(); }
+  render();
+}
+async function closeCheck(key){
+  const el=document.getElementById('chkm_'+key); const memo=(el&&el.value||'').trim();
+  if(!memo){ toast('비고(확인 사항)를 입력해야 Close 할 수 있습니다'); el&&el.focus(); return; }
+  const it=checkItems().find(i=>i.key===key);
+  const by = currentUser ? (currentUser.displayName||currentUser.email||'') : '로컬';
+  await saveChecks({[key]:{memo, by, at:Date.now(), cat:it?it.cat:'', desc:it?it.desc.replace(/<[^>]+>/g,''):''}});
+  if(state.chkDraft) delete state.chkDraft[key];
+  toast('점검 항목 종료됨');
+  if(it) logHistory({action:'점검 종료', kind:'cfg', col:'config', docId:'app', summary:`${CHK_CAT[it.cat].label} · ${it.desc.replace(/<[^>]+>/g,'')}`, changes:[{f:'memo',label:'비고',from:'',to:memo}]});
+}
+async function reopenCheck(key){
+  if(!confirm('이 점검 항목을 다시 열까요?')) return;
+  const it=checkItems().find(i=>i.key===key);
+  await saveChecks({[key]:null}); toast('다시 열림');
+  if(it) logHistory({action:'점검 재개', kind:'cfg', col:'config', docId:'app', summary:`${CHK_CAT[it.cat].label} · ${it.desc.replace(/<[^>]+>/g,'')}`});
 }
 function chkToggle(o){ state.chkOpen=o; }
+function chkDraft(k,v){ (state.chkDraft=state.chkDraft||{})[k]=v; }
+function chkShowClosed(){ state.chkClosed=!state.chkClosed; render(); }
 function checksPanel(){
-  const W=dataChecks(); if(!W.length) return `<div class="banner" style="background:var(--green-l);border-color:#a7f3d0;color:#065f46;margin-bottom:16px">✅ 데이터 점검: 이상 항목 없음</div>`;
-  return `<details class="panel" style="border-left:4px solid var(--amber)" ${state.chkOpen?'open':''} ontoggle="app.chkToggle(this.open)"><summary style="cursor:pointer;font-weight:700">⚠️ 데이터 점검 — 확인 필요 ${W.length}개 항목 <button class="btn ghost sm" style="float:right;margin-top:-3px" onclick="event.preventDefault();event.stopPropagation();app.exportChecks()">📄 점검 목록 엑셀</button></summary>
-    <ul style="margin:10px 0 0 18px;line-height:1.8;font-size:13px">${W.map(w=>`<li>${w}</li>`).join('')}</ul></details>`;
+  const all=checkItems(); const open=all.filter(i=>!i.closed), closed=all.filter(i=>i.closed);
+  const groups={}; open.forEach(i=>{ (groups[i.cat]=groups[i.cat]||[]).push(i); });
+  const closedBtn = closed.length? `<button class="btn ghost sm" onclick="event.preventDefault();event.stopPropagation();app.chkShowClosed()">${state.chkClosed?'종료 항목 숨기기':'종료 항목 보기 ('+closed.length+')'}</button>`:'';
+  const xlsBtn = `<button class="btn ghost sm" onclick="event.preventDefault();event.stopPropagation();app.exportChecks()">📄 점검 목록 엑셀</button>`;
+  const closedList = state.chkClosed && closed.length ? `<div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px;color:var(--sub)">✔ 종료된 항목 ${closed.length}건</div>
+    <table><thead><tr><th>항목</th><th>내용</th><th>비고</th><th>종료</th><th></th></tr></thead><tbody>
+    ${closed.map(i=>`<tr><td style="white-space:nowrap">${CHK_CAT[i.cat].label}</td><td>${i.desc}</td><td>${esc(i.closed.memo)}</td>
+      <td style="white-space:nowrap;color:var(--sub)">${esc(i.closed.by||'')}<br>${i.closed.at?absTime(i.closed.at):''}</td>
+      <td><button class="btn ghost sm" onclick="app.reopenCheck('${i.key}')">다시 열기</button></td></tr>`).join('')}
+    </tbody></table></div>` : '';
+  if(!open.length) return `<div class="banner" style="background:var(--green-l);border-color:#a7f3d0;color:#065f46;margin-bottom:16px;display:block">✅ 데이터 점검: 확인할 항목 없음 ${closed.length?`(종료 ${closed.length}건)`:''}
+    <span style="float:right">${closedBtn} ${closed.length?xlsBtn:''}</span>${closedList}</div>`;
+  return `<details class="panel" style="border-left:4px solid var(--amber)" ${state.chkOpen?'open':''} ontoggle="app.chkToggle(this.open)">
+    <summary style="cursor:pointer;font-weight:700">⚠️ 데이터 점검 — 확인 필요 ${open.length}건 <span style="font-weight:400;color:var(--sub);font-size:12px">(${Object.keys(groups).length}개 항목${closed.length?' · 종료 '+closed.length+'건':''})</span>
+      <span style="float:right;margin-top:-3px">${closedBtn} ${xlsBtn}</span></summary>
+    <div class="help" style="margin:8px 0 4px">확인 후 비고에 확인 사항을 적고 <b>Close</b> 하면 목록에서 사라집니다 (팀 전체 공유 · 변경 이력에 기록). 데이터를 고치면 자동으로 없어집니다.</div>
+    ${Object.entries(groups).map(([c,a])=>`<div style="margin-top:12px">
+      <div style="font-weight:700;font-size:13px">${CHK_CAT[c].label} <span class="tag warn">${a.length}건</span> <span style="font-weight:400;color:var(--sub);font-size:12px">— ${CHK_CAT[c].act}</span></div>
+      <table style="margin-top:4px"><tbody>${a.map(i=>`<tr>
+        <td style="font-size:12.5px">${i.desc}</td>
+        <td style="width:340px"><input type="text" id="chkm_${i.key}" placeholder="비고: 확인 사항 입력" style="width:100%" value="${esc((state.chkDraft||{})[i.key]||'')}" oninput="app.chkDraft('${i.key}',this.value)" onkeydown="if(event.key==='Enter')app.closeCheck('${i.key}')"></td>
+        <td style="width:70px"><button class="btn primary sm" onclick="app.closeCheck('${i.key}')">Close</button></td></tr>`).join('')}</tbody></table></div>`).join('')}
+    ${closedList}</details>`;
+}
+/* 점검 목록 엑셀 (미종료 + 종료 모두, 상태·비고 포함) */
+function exportChecks(){
+  const all=checkItems(); if(!all.length){ toast('점검 항목이 없습니다'); return; }
+  const R=[]; all.forEach(i=>i.recs.forEach(r=>R.push({
+    상태:i.closed?'종료':'확인 필요', 점검항목:CHK_CAT[i.cat].label, 구분:i.kind==='in'?'입고':'출고',
+    'INVOICE / 판매처':i.kind==='in'?(r.invoice||''):(r.buyer||''), 품목:r.item+' '+pct(r.purity),
+    ETD:i.kind==='in'?(r.etd||''):'', 창고입고일:i.kind==='in'?(r.plantEta||''):'', 출고일:i.kind==='out'?(r.date||''):'',
+    '수량(kg)':+r.qty||0, '금액(USD)':+r.amount||0, 조치:CHK_CAT[i.cat].act,
+    비고:i.closed?i.closed.memo:'', 종료자:i.closed?(i.closed.by||''):'', 종료일시:i.closed&&i.closed.at?absTime(i.closed.at):''})));
+  const sum={}; all.forEach(i=>{ const s=sum[i.cat]||(sum[i.cat]={점검항목:CHK_CAT[i.cat].label,'확인 필요':0,종료:0}); i.closed?s.종료++:s['확인 필요']++; });
+  const wb=XLSX.utils.book_new();
+  const ws1=XLSX.utils.json_to_sheet([...Object.values(sum)]); ws1['!cols']=[{wch:34},{wch:10},{wch:8}];
+  const ws2=XLSX.utils.json_to_sheet(R); ws2['!cols']=[{wch:9},{wch:30},{wch:6},{wch:18},{wch:13},{wch:11},{wch:11},{wch:11},{wch:10},{wch:12},{wch:40},{wch:30},{wch:14},{wch:16}];
+  XLSX.utils.book_append_sheet(wb,ws1,'요약'); XLSX.utils.book_append_sheet(wb,ws2,'점검상세');
+  XLSX.writeFile(wb,'JNFAM_수불부_데이터점검_'+today()+'.xlsx');
 }
 
 /* ================= 공통 UI ================= */
@@ -1497,7 +1546,7 @@ function exportExcel(){
 }
 
 /* ================= 초기화 ================= */
-window.app = {exportChecks,setBasis,setAvg,chkToggle,setBegNote,trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
+window.app = {chkDraft,closeCheck,reopenCheck,chkShowClosed,exportChecks,setBasis,setAvg,chkToggle,setBegNote,trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
   syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,resetFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
   loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout,
