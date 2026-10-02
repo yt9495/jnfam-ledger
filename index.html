@@ -454,43 +454,90 @@ function itemGroups(){
   [...state.inbound,...state.outbound,...state.beginning].forEach(r=>{ if(r.item&&r.purity!=null) set.set(r.item+'|'+r.purity,{item:r.item,purity:r.purity}); });
   return [...set.entries()].map(([key,v])=>({key,...v,label:v.item+' '+pct(v.purity)}));
 }
-/* 구간(period) 반영 수불 계산: 구간 이전 실적은 기초로 이월 */
+/* ================= 총평균법 (월별) =================
+   상품(04·창고) 재고 풀 기준. 매월 총평균단가 = (월초 재고금액 + 당월 상품입고 구매금액(단가×수량)) ÷ (월초 수량 + 당월 입고 수량)
+   당월 출고원가 = 출고수량 × 당월 총평균단가 (건별 센트 반올림), 월말 재고금액 = 월초 + 입고 − 출고원가 → 다음 달 기초로 이월.
+   미착품(05)은 창고 입고 전까지 개별 원가(원재료인식금액)로 보유. 출고 '금액'(판매금액)은 매출 참고용으로만 사용. */
+/* 재고 평가 원가 = 구매단가 × 수량 (인보이스 금액). 운임·통관·관세(총계)는 재고원가에 넣지 않음 */
+/* 원가 기준 선택: 'price' = 구매단가만(인보이스 금액) / 'landed' = 운임·통관비·관세 포함(원재료인식금액) */
+const BASISKEY='jnfam_cost_basis';
+let costBasis = (()=>{ try{ return localStorage.getItem(BASISKEY)==='landed'?'landed':'price'; }catch(e){ return 'price'; } })();
+const invCost = r => costBasis==='landed' ? cogc(r) : (+r.amount||0);
+const basisLabel = () => costBasis==='landed' ? '운임·통관비·관세 포함' : '구매단가만';
+const amtLabel = () => costBasis==='landed' ? '원재료인식금액' : '구매금액';
+function setBasis(b){ costBasis = b==='landed'?'landed':'price'; try{ localStorage.setItem(BASISKEY,costBasis); }catch(e){} render(); }
+const ymOf = d => dstr(d).slice(0,7) || today().slice(0,7);   // 일자 없는 건은 당월로 처리
+const r2 = n => Math.round(n*100)/100;
+function avgCostBook(g){
+  const beg0 = state.beginning.filter(b=>b.item===g.item&&+b.purity===+g.purity);
+  let q = beg0.reduce((s,b)=>s+(+b.qty||0),0), a = beg0.reduce((s,b)=>s+(+b.amt||0),0);
+  const byM = new Map(); const slot = m => { if(!byM.has(m)) byM.set(m,{ins:[],outs:[]}); return byM.get(m); };
+  state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.invType==='상품').forEach(r=>slot(ymOf(effInDate(r))).ins.push(r));
+  state.outbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.category!=='충전').forEach(r=>slot(ymOf(r.date)).outs.push(r));
+  const outCost = new Map(); const rows = [];
+  let lastAvg = q>0 ? a/q : 0;
+  [...byM.keys()].sort().forEach(m=>{
+    const {ins,outs} = byM.get(m);
+    const inQ = ins.reduce((s,r)=>s+(+r.qty||0),0), inA = ins.reduce((s,r)=>s+invCost(r),0);
+    const dq = q+inQ;
+    const avg = dq>0 ? (a+inA)/dq : lastAvg;      // 수량이 0 이하이면 직전 단가 유지
+    lastAvg = avg;
+    let outQ=0, outC=0, sales=0;
+    outs.forEach(r=>{ const c=r2((+r.qty||0)*avg); outCost.set(r,c); outQ+=(+r.qty||0); outC+=c; sales+=(+r.amount||0); });
+    rows.push({month:m, begQ:q, begA:a, inQ, inA, avg, outQ, outC, sales, endQ:dq-outQ, endA:a+inA-outC});
+    q = dq-outQ; a = a+inA-outC;
+  });
+  return {rows, outCost};
+}
+/* 전체 품목 출고원가 맵 (출고 탭·엑셀용) */
+function allOutCost(){ const m=new Map(); itemGroups().forEach(g=>avgCostBook(g).outCost.forEach((v,k)=>m.set(k,v))); return m; }
+
+/* 구간(period) 반영 수불 계산: 구간 이전 실적은 기초로 이월 (금액은 총평균 원가) */
 function computeLedger(){
   const {from,to}=state.period;
   const before = d => from && d && d < from;
   const within = d => (!from || !d || d >= from) && (!to || !d || d <= to);
+  const notAfter = d => !to || !d || d <= to;
   return itemGroups().map(g=>{
+    const book = avgCostBook(g); const oc = r => book.outCost.get(r) || 0;
     const beg0 = state.beginning.filter(b=>b.item===g.item&&+b.purity===+g.purity);
     let begQty = beg0.reduce((s,b)=>s+(+b.qty||0),0), begAmt = beg0.reduce((s,b)=>s+(+b.amt||0),0);
     /* 입고 인식 = 상품(04) + 미착품(05) 모두 재고로 인식 (선적예정 00은 미인식) */
     const insAll = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&(r.invType==='상품'||r.invType==='미착품'));
     const outsAll = state.outbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.category!=='충전');
-    insAll.filter(r=>before(effRecDate(r))).forEach(r=>{ begQty+=(+r.qty||0); begAmt+=cogc(r); });
-    outsAll.filter(r=>before(r.date)).forEach(r=>{ begQty-=(+r.qty||0); begAmt-=(+r.amount||0); });
+    insAll.filter(r=>before(effRecDate(r))).forEach(r=>{ begQty+=(+r.qty||0); begAmt+=invCost(r); });
+    outsAll.filter(r=>before(r.date)).forEach(r=>{ begQty-=(+r.qty||0); begAmt-=oc(r); });
     const ins = insAll.filter(r=>!before(effRecDate(r)) && within(effRecDate(r)));
     const outs = outsAll.filter(r=>!before(r.date) && within(r.date));
-    const inQty = ins.reduce((s,r)=>s+(+r.qty||0),0), inAmt = ins.reduce((s,r)=>s+cogc(r),0);
+    const inQty = ins.reduce((s,r)=>s+(+r.qty||0),0), inAmt = ins.reduce((s,r)=>s+invCost(r),0);
     const inTrQty = ins.filter(r=>r.invType==='미착품').reduce((s,r)=>s+(+r.qty||0),0);
-    const inTrAmt = ins.filter(r=>r.invType==='미착품').reduce((s,r)=>s+cogc(r),0);
-    const outQty = outs.reduce((s,r)=>s+(+r.qty||0),0), outAmt = outs.reduce((s,r)=>s+(+r.amount||0),0);
-    /* 출고코드별 내역 (Inventory Ledger 양식용) */
+    const inTrAmt = ins.filter(r=>r.invType==='미착품').reduce((s,r)=>s+invCost(r),0);
+    const outQty = outs.reduce((s,r)=>s+(+r.qty||0),0), outAmt = outs.reduce((s,r)=>s+oc(r),0);
+    const outSales = outs.reduce((s,r)=>s+(+r.amount||0),0);
+    /* 출고코드별 내역 (Inventory Ledger 양식용) — 금액 = 총평균 출고원가 */
     const ocMap = new Map();
-    outs.forEach(r=>{ const c=outCode(r); const o=ocMap.get(c)||{code:c,qty:0,amt:0}; o.qty+=(+r.qty||0); o.amt+=(+r.amount||0); ocMap.set(c,o); });
+    outs.forEach(r=>{ const c=outCode(r); const o=ocMap.get(c)||{code:c,qty:0,amt:0,sales:0}; o.qty+=(+r.qty||0); o.amt+=oc(r); o.sales+=(+r.amount||0); ocMap.set(c,o); });
     const inCodes = [...new Set(insAll.map(r=>inCode(r)))];
-    const transit = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.invType==='미착품');
-    const trQty = transit.reduce((s,r)=>s+(+r.qty||0),0), trAmt = transit.reduce((s,r)=>s+cogc(r),0);
+    /* 미착품 = 구간 말 기준 인식된(ETD ≤ 종료일) 운송중 건, 개별 원가 */
+    const transit = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.invType==='미착품'&&notAfter(effRecDate(r)));
+    const trQty = transit.reduce((s,r)=>s+(+r.qty||0),0), trAmt = transit.reduce((s,r)=>s+invCost(r),0);
     const planned = state.inbound.filter(r=>r.item===g.item&&+r.purity===+g.purity&&r.invType==='선적예정(미인식)');
     const plQty = planned.reduce((s,r)=>s+(+r.qty||0),0);
     const endQty = begQty+inQty-outQty, endAmt = begAmt+inAmt-outAmt;   // 총 재고 = 상품(04) + 미착품(05)
-    return {...g, begQty,begAmt,inQty,inAmt,inTrQty,inTrAmt,outQty,outAmt,
-      endQty, endAmt,
-      goodsQty:endQty-trQty, goodsAmt:endAmt-trAmt,                     // 창고 상품(04)만
+    const goodsQty = endQty-trQty, goodsAmt = endAmt-trAmt;             // 창고 상품(04)만 — 총평균 원가
+    /* 구간에 걸치는 월별 총평균 내역 */
+    const fm = from? from.slice(0,7) : '', tm = to? to.slice(0,7) : '';
+    const months = book.rows.filter(x=>(!fm||x.month>=fm)&&(!tm||x.month<=tm));
+    const lastRow = book.rows.filter(x=>!tm||x.month<=tm).slice(-1)[0];
+    const avgCost = Math.abs(goodsQty)>0.5 ? goodsAmt/goodsQty : (lastRow? lastRow.avg : 0);
+    return {...g, begQty,begAmt,inQty,inAmt,inTrQty,inTrAmt,outQty,outAmt,outSales,
+      endQty, endAmt, goodsQty, goodsAmt, avgCost, months,
       outCodes:[...ocMap.values()], inCodes,
       trQty,trAmt,trCnt:transit.length, plQty,plCnt:planned.length};
   }).filter(l=> l.begQty||l.inQty||l.outQty||l.trQty||l.plQty||l.begAmt );
 }
 function ledgerTotals(L){
-  return L.reduce((a,l)=>{['begQty','begAmt','inQty','inAmt','inTrQty','inTrAmt','outQty','outAmt','endQty','endAmt','goodsQty','goodsAmt','trQty','trAmt','plQty'].forEach(k=>a[k]=(a[k]||0)+l[k]);return a;},{});
+  return L.reduce((a,l)=>{['begQty','begAmt','inQty','inAmt','inTrQty','inTrAmt','outQty','outAmt','outSales','endQty','endAmt','goodsQty','goodsAmt','trQty','trAmt','plQty'].forEach(k=>a[k]=(a[k]||0)+l[k]);return a;},{});
 }
 
 /* ================= 공통 UI ================= */
@@ -527,6 +574,12 @@ function periodBar(){
     <button class="btn ghost sm" onclick="app.quickPeriod('${m}-01','${m}-31')">이번달</button>
     <span class="spacer"></span>
     <span class="help">현재 구간: <b>${periodLabel()}</b> · 구간 이전 실적은 기초재고로 이월 계산</span>
+  </div>
+  <div class="period-bar">
+    <b>💲 재고 원가 기준</b>
+    <button class="btn toggle sm ${costBasis==='price'?'on':''}" onclick="app.setBasis('price')">구매단가만 (인보이스)</button>
+    <button class="btn toggle sm ${costBasis==='landed'?'on':''}" onclick="app.setBasis('landed')">운임·통관비·관세 포함</button>
+    <span class="help">${costBasis==='landed'?'입고원가 = 금액 + 해상운송료 + 통관비 + 관세 (원재료인식금액)':'입고원가 = 단가 × 수량 (인보이스 금액)'} · 월별 총평균단가·출고원가·재고금액이 이 기준으로 계산됩니다</span>
   </div>`;
 }
 
@@ -589,16 +642,17 @@ function renderDashboard(){
   <div class="amt-section"><h3>💲 금액 현황</h3>
   <div class="cards">
     <div class="kpi b-red"><div class="k-label">총 재고금액 (상품+미착품)</div><div class="k-value">${money(t.endAmt||0)}</div><div class="k-sub">${fmt(t.endQty)} kg</div></div>
-    <div class="kpi b-green"><div class="k-label">상품 재고금액 (창고 04)</div><div class="k-value">${money(t.goodsAmt||0)}</div><div class="k-sub">${fmt(t.goodsQty)} kg</div></div>
+    <div class="kpi b-green"><div class="k-label">상품 재고금액 (창고 04 · 총평균법)</div><div class="k-value">${money(t.goodsAmt||0)}</div><div class="k-sub">${fmt(t.goodsQty)} kg</div></div>
     <div class="kpi b-amber"><div class="k-label">미착품 금액 (운송 중 05)</div><div class="k-value">${money(t.trAmt||0)}</div><div class="k-sub">${fmt(t.trQty)} kg · ${L.reduce((s,l)=>s+l.trCnt,0)}건</div></div>
-    <div class="kpi b-blue"><div class="k-label">구간 입고 / 출고 금액</div><div class="k-value" style="font-size:19px">${money(t.inAmt||0)} / ${money(t.outAmt||0)}</div><div class="k-sub">${periodLabel()}</div></div>
+    <div class="kpi b-blue"><div class="k-label">구간 입고 / 출고원가 (총평균)</div><div class="k-value" style="font-size:19px">${money(t.inAmt||0)} / ${money(t.outAmt||0)}</div><div class="k-sub">${periodLabel()}</div></div>
   </div>
   <div class="panel"><h3>품목별 금액 (구간: ${periodLabel()})</h3><div class="item-cards">
     ${L.map(l=>`<div class="item-card"><div class="ic-title"><span>${esc(l.label)}</span><span style="color:var(--red)">${money(l.endAmt)}</span></div>
       <div class="row"><span>총 재고 (04+05)</span><span class="v">${fmt(l.endQty)} kg</span></div>
       <div class="row"><span>상품 재고 (창고)</span><span class="v" style="color:var(--green)">${money(l.goodsAmt)} · ${fmt(l.goodsQty)} kg</span></div>
+      <div class="row"><span>총평균 단가</span><span class="v">$${l.avgCost?l.avgCost.toFixed(4):'-'}/kg</span></div>
       <div class="row"><span>미착품 (운송중)</span><span class="v" style="color:var(--amber)">${money(l.trAmt)} · ${fmt(l.trQty)} kg</span></div>
-      <div class="row"><span>구간 입고 / 출고</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
+      <div class="row"><span>구간 입고 / 출고원가</span><span class="v" style="color:var(--blue)">${money(l.inAmt)} / ${money(l.outAmt)}</span></div>
     </div>`).join('')}
   </div></div>
   </div>
@@ -750,7 +804,7 @@ function renderInbound(){
 
 /* ---------- 상품출고 ---------- */
 function renderOutbound(){
-  const f=state.filters.out;
+  const f=state.filters.out; const OC=allOutCost();
   let rows=[...state.outbound].sort((a,b)=>dstr(b.date).localeCompare(dstr(a.date)));
   if(f.cat!=='전체') rows=rows.filter(r=>r.category===f.cat);
   if(f.item) rows=rows.filter(r=>r.item===f.item);
@@ -778,16 +832,16 @@ function renderOutbound(){
   ${filterSummary(rows,hasF)}
   <div class="panel tbl-scroll"><table><thead><tr>
     <th>구분</th><th>출고코드</th><th>품목</th><th>함량</th><th>용기</th><th>판매처</th><th>출고일</th>
-    <th class="num">수량(kg)</th><th class="num">금액($)</th><th class="num">단가($/kg)</th><th>비고</th><th></th>
+    <th class="num">수량(kg)</th><th class="num">금액($)</th><th class="num">단가($/kg)</th><th class="num" title="월별 총평균단가 × 수량">출고원가($)</th><th>비고</th><th></th>
   </tr></thead><tbody>
   ${rows.length? rows.map(r=>`<tr>
     <td>${invTag(r.category)}${r.src==='inventory'?' <span class="tag ok" title="재고 현황 시스템 출하에서 자동 등록된 출고">재고현황</span>':''}</td><td class="mono">${r.category==='충전'?'-':outCode(r)}</td><td>${esc(r.item)}</td><td>${pct(r.purity)}</td>
     <td>${esc(r.pack)}</td><td>${esc(r.buyer)||'-'}</td><td>${r.date||'-'}</td>
     <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(r.amount)}</td>
-    <td class="num">${r.qty? (r.amount/r.qty).toFixed(3):'-'}</td><td>${esc(r.note)||''}</td>
+    <td class="num">${r.qty? (r.amount/r.qty).toFixed(3):'-'}</td><td class="num" style="color:var(--sub)">${OC.has(r)?fmt2(OC.get(r)):'-'}</td><td>${esc(r.note)||''}</td>
     <td><button class="btn ghost sm" onclick="app.outboundModal('${r.id}')">수정</button>
         <button class="btn danger sm" onclick="app.del('outbound','${r.id}')">삭제</button></td>
-  </tr>`).join(''):`<tr><td colspan="12" class="empty">${hasF?'검색 조건에 맞는 출고 데이터가 없습니다':'출고 데이터가 없습니다'}</td></tr>`}
+  </tr>`).join(''):`<tr><td colspan="13" class="empty">${hasF?'검색 조건에 맞는 출고 데이터가 없습니다':'출고 데이터가 없습니다'}</td></tr>`}
   </tbody></table></div>`;
 }
 
@@ -884,9 +938,10 @@ function renderLedger(){
       <td><span class="mono">${esc(oc.code)}</span></td>
       ${i===0?`<td class="num center" rowspan="${n}">${fmt(l.begQty)}</td><td class="num center" rowspan="${n}">${fmt2(l.begAmt)}</td>
       <td class="num center" rowspan="${n}">${fmt(l.inQty)}</td><td class="num center" rowspan="${n}">${fmt2(l.inAmt)}</td>`:''}
-      <td class="num">${oc.qty==null?'-':fmt(oc.qty)}</td><td class="num">${oc.amt==null?'-':fmt2(oc.amt)}</td>
+      <td class="num">${oc.qty==null?'-':fmt(oc.qty)}</td><td class="num" title="${oc.sales!=null?'매출 $'+fmt2(oc.sales):''}">${oc.amt==null?'-':fmt2(oc.amt)}</td>
       ${i===0?`<td class="num center" rowspan="${n}">${fmt(l.goodsQty)}</td>
       <td class="num center ${l.goodsAmt<0?'neg':''}" rowspan="${n}">${fmt2(l.goodsAmt)}</td>
+      <td class="num center" rowspan="${n}" title="총평균 단가">${l.avgCost?l.avgCost.toFixed(4):'-'}</td>
       <td class="num center" rowspan="${n}" style="color:var(--amber);font-weight:600">${l.trQty?fmt(l.trQty):'-'}</td>
       <td class="num center" rowspan="${n}" style="color:var(--amber);font-weight:600">${l.trAmt?fmt2(l.trAmt):'-'}</td>
       <td class="num center" rowspan="${n}" style="font-weight:700">${fmt(l.endQty)}</td>
@@ -896,12 +951,13 @@ function renderLedger(){
   }).join('');
   $('main').innerHTML = `
   <h2 class="page-title">수불부 (Inventory Ledger)</h2>
-  <div class="page-sub">기초 + 입고(상품 04 + 미착품 05 모두 재고 인식) − 출고 = 기말 총 재고 · 선적예정(00)·충전은 제외 · 미착품→상품 전환 시 분류만 이동(총 재고 불변)</div>
+  <div class="page-sub">기초 + 입고(상품 04 + 미착품 05 모두 재고 인식) − 출고 = 기말 총 재고 · 선적예정(00)·충전은 제외 · 미착품→상품 전환 시 분류만 이동(총 재고 불변)<br>
+  <b>금액 평가: 월별 총평균법</b> — 상품(04) 출고원가·재고금액 = 수량 × 당월 총평균단가 [(월초 재고금액 + 당월 입고 ${amtLabel()}) ÷ (월초 수량 + 당월 입고 수량)] · 원가 기준: <b>${basisLabel()}</b> · 미착품(05)은 건별 ${amtLabel()}</div>
   ${periodBar()}
   <div class="cards">
     <div class="kpi b-blue"><div class="k-label">총 기초재고</div><div class="k-value">${money(t.begAmt||0)}</div><div class="k-sub">${fmt(t.begQty)} kg</div></div>
     <div class="kpi b-green"><div class="k-label">총 입고 (04+05 인식)</div><div class="k-value">${money(t.inAmt||0)}</div><div class="k-sub">${fmt(t.inQty)} kg · 미착품분 ${money(t.inTrAmt||0)}</div></div>
-    <div class="kpi b-purple"><div class="k-label">총 출고</div><div class="k-value">${money(t.outAmt||0)}</div><div class="k-sub">${fmt(t.outQty)} kg</div></div>
+    <div class="kpi b-purple"><div class="k-label">총 출고원가 (총평균)</div><div class="k-value">${money(t.outAmt||0)}</div><div class="k-sub">${fmt(t.outQty)} kg · 매출 ${money(t.outSales||0)}</div></div>
     <div class="kpi b-red"><div class="k-label">총 기말재고 (상품+미착품)</div><div class="k-value">${money(t.endAmt||0)}</div><div class="k-sub">${fmt(t.endQty)} kg = 상품 ${money(t.goodsAmt||0)} + 미착품 ${money(t.trAmt||0)}</div></div>
   </div>
   <div class="panel">
@@ -910,13 +966,13 @@ function renderLedger(){
     <div class="toolbar" style="margin-bottom:10px"><span class="spacer"></span><button class="btn ghost sm" onclick="app.exportExcel()">📄 엑셀 내보내기</button></div>
     <div class="tbl-scroll"><table class="ledger-tbl"><thead>
       <tr><th rowspan="2">Product<br>Name</th><th rowspan="2">Inbound Code</th><th rowspan="2">Outbound Code</th>
-      <th colspan="2">Beginning Inventory(기초)</th><th colspan="2">Inbound(입고)<br><span style="font-weight:400;font-size:10.5px">상품 04 + 미착품 05</span></th><th colspan="2">Outbound(출고)</th>
-      <th colspan="2" style="background:var(--green-l)">상품 재고(04·창고)</th><th colspan="2" style="background:var(--amber-l)">미착품(05·운송중)</th>
+      <th colspan="2">Beginning Inventory(기초)</th><th colspan="2">Inbound(입고)<br><span style="font-weight:400;font-size:10.5px">상품 04 + 미착품 05 · ${amtLabel()}</span></th><th colspan="2">Outbound(출고)<br><span style="font-weight:400;font-size:10.5px">금액 = 총평균 원가</span></th>
+      <th colspan="3" style="background:var(--green-l)">상품 재고(04·창고)<br><span style="font-weight:400;font-size:10.5px">총평균법</span></th><th colspan="2" style="background:var(--amber-l)">미착품(05·운송중)</th>
       <th colspan="2" style="background:#fff7cc">Ending Inventory(총 재고)<br><span style="font-weight:400;font-size:10.5px">상품 + 미착품</span></th>
       <th rowspan="2">검증</th></tr>
       <tr><th class="num">Quantity(수량)</th><th class="num">Amount(금액)</th><th class="num">Quantity(수량)</th><th class="num">Amount(금액)</th>
       <th class="num">Quantity(수량)</th><th class="num">Amount(금액)</th>
-      <th class="num" style="background:var(--green-l)">Quantity(수량)</th><th class="num" style="background:var(--green-l)">Amount(금액)</th>
+      <th class="num" style="background:var(--green-l)">Quantity(수량)</th><th class="num" style="background:var(--green-l)">Amount(금액)</th><th class="num" style="background:var(--green-l)">단가($/kg)</th>
       <th class="num" style="background:var(--amber-l)">Quantity(수량)</th><th class="num" style="background:var(--amber-l)">Amount(금액)</th>
       <th class="num" style="background:#fff7cc">Quantity(수량)</th><th class="num" style="background:#fff7cc">Amount(금액)</th></tr>
     </thead><tbody>
@@ -925,13 +981,14 @@ function renderLedger(){
         <td class="num">${fmt(t.begQty)}</td><td class="num">$ ${fmt2(t.begAmt)}</td>
         <td class="num">${fmt(t.inQty)}</td><td class="num">$ ${fmt2(t.inAmt)}</td>
         <td class="num">${fmt(t.outQty)}</td><td class="num">$ ${fmt2(t.outAmt)}</td>
-        <td class="num">${fmt(t.goodsQty)}</td><td class="num ${t.goodsAmt<0?'neg':''}">$ ${fmt2(t.goodsAmt)}</td>
+        <td class="num">${fmt(t.goodsQty)}</td><td class="num ${t.goodsAmt<0?'neg':''}">$ ${fmt2(t.goodsAmt)}</td><td></td>
         <td class="num">${fmt(t.trQty)}</td><td class="num">$ ${fmt2(t.trAmt)}</td>
         <td class="num">${fmt(t.endQty)}</td><td class="num ${t.endAmt<0?'neg':''}">$ ${fmt2(t.endAmt)}</td>
         <td></td></tr>
     </tbody></table></div>
   </div>
-  <div class="panel"><h3>미착품 현황 (참고)</h3><div class="tbl-scroll"><table><thead><tr><th>품목</th><th>미착품 코드</th><th class="num">수량(kg)</th><th class="num">원재료인식금액($)</th><th>분류 기준</th></tr></thead><tbody>
+  ${avgPanel(L)}
+  <div class="panel"><h3>미착품 현황 (참고)</h3><div class="tbl-scroll"><table><thead><tr><th>품목</th><th>미착품 코드</th><th class="num">수량(kg)</th><th class="num">${amtLabel()}($)</th><th>분류 기준</th></tr></thead><tbody>
   ${L.filter(l=>l.trQty).map(l=>`<tr><td>${esc(l.label)}</td><td class="mono">05${abbr(l.item)}IBCJNF${pct(l.purity)}</td><td class="num">${fmt(l.trQty)}</td><td class="num">${fmt2(l.trAmt)}</td><td>FOB 선적 완료 ~ 미국 창고 입고 전</td></tr>`).join('') || '<tr><td colspan="5" class="empty">미착품이 없습니다</td></tr>'}
   </tbody></table></div></div>`;
 }
@@ -1249,10 +1306,29 @@ async function wipe(){
   toast('전체 데이터 삭제 완료');
   logHistory({action:'전체 데이터 삭제', kind:'del', col:'', summary:'입고·출고 전체 삭제'});
 }
+/* 월별 총평균 계산 내역 */
+function avgPanel(L){
+  const rows = L.filter(l=>l.months.length).map(l=>l.months.map((m,i)=>`<tr>
+    ${i===0?`<td rowspan="${l.months.length}" style="font-weight:700;vertical-align:middle">${esc(l.label)}</td>`:''}
+    <td class="mono">${m.month}</td>
+    <td class="num">${fmt(m.begQ)}</td><td class="num">${fmt2(m.begA)}</td>
+    <td class="num">${fmt(m.inQ)}</td><td class="num">${fmt2(m.inA)}</td>
+    <td class="num" style="font-weight:700;color:var(--blue)">${m.avg.toFixed(4)}</td>
+    <td class="num">${fmt(m.outQ)}</td><td class="num">${fmt2(m.outC)}</td>
+    <td class="num ${m.endQ<0?'neg':''}">${fmt(m.endQ)}</td><td class="num ${m.endA<0?'neg':''}">${fmt2(m.endA)}</td>
+    <td class="num" style="color:var(--sub)">${fmt2(m.sales)}</td></tr>`).join('')).join('');
+  return `<div class="panel"><h3>월별 총평균 계산 내역 (상품 04 · ${basisLabel()} · ${periodLabel()})</h3>
+  <div class="help" style="margin-bottom:8px">원가 기준: <b>${basisLabel()}</b> · 총평균단가 = (월초 금액 + 입고 ${amtLabel()}) ÷ (월초 수량 + 입고 수량) · 출고원가 = 출고 수량 × 총평균단가 · 월말 재고가 다음 달 월초로 이월 · 당월은 월중 입고가 추가되면 단가가 바뀝니다</div>
+  <div class="tbl-scroll"><table><thead><tr><th>품목</th><th>월</th><th class="num">월초 수량</th><th class="num">월초 금액($)</th><th class="num">입고 수량</th><th class="num">입고 금액($)</th>
+  <th class="num">총평균단가</th><th class="num">출고 수량</th><th class="num">출고원가($)</th><th class="num">월말 수량</th><th class="num">월말 금액($)</th><th class="num">매출(참고)</th></tr></thead>
+  <tbody>${rows||'<tr><td colspan="12" class="empty">해당 구간에 상품 입출고가 없습니다</td></tr>'}</tbody></table></div></div>`;
+}
+
 function exportExcel(){
   const wb=XLSX.utils.book_new();
   const inRows=state.inbound.map(r=>({재고구분:r.invType,코드:inCode(r),품목:r.item,함량:pct(r.purity),구매처:r.supplier,용기:r.pack,ETD:r.etd,ETA:r.eta,창고입고일:r.plantEta,'BL No.':r.bl,'INVOICE No.':r.invoice,'수량(kg)':r.qty,'단가':r.price,'금액(USD)':r.amount,해상운송료:r.freight,통관비:r.cc,관세:r.duty,운송비:r.trucking,기타비용:r.etc,'총계(운임·통관·관세)':capCost(r),'원재료인식금액':cogc(r),비고:r.note}));
-  const outRows=state.outbound.map(r=>({구분:r.category,출고코드:r.category==='충전'?'':outCode(r),품목:r.item,함량:pct(r.purity),용기:r.pack,판매처:r.buyer,출고일:r.date,'출고수량(kg)':r.qty,'단가($/kg)':r.qty?+(r.amount/r.qty).toFixed(4):'','출고금액(USD)':r.amount,'Shuttle':r.shuttle,비고:r.note}));
+  const OC=allOutCost();
+  const outRows=state.outbound.map(r=>({구분:r.category,출고코드:r.category==='충전'?'':outCode(r),품목:r.item,함량:pct(r.purity),용기:r.pack,판매처:r.buyer,출고일:r.date,'출고수량(kg)':r.qty,'단가($/kg)':r.qty?+(r.amount/r.qty).toFixed(4):'','출고금액(USD)':r.amount,'출고원가(총평균)':r.category==='충전'?'':(OC.get(r)??''),'Shuttle':r.shuttle,비고:r.note}));
   const L=computeLedger(); const t=ledgerTotals(L);
   const ledRows=[];
   L.forEach(l=>{
@@ -1260,20 +1336,22 @@ function exportExcel(){
     ocs.forEach((oc,i)=>ledRows.push({
       'Product':i===0?l.label:'','Inbound Code':i===0?l.inCodes.join(' / '):'','Outbound Code':oc.code,
       '기초수량':i===0?l.begQty:'','기초금액':i===0?l.begAmt:'','입고수량(04+05)':i===0?l.inQty:'','입고금액(04+05)':i===0?l.inAmt:'',
-      '출고수량':oc.qty,'출고금액':oc.amt,
-      '상품재고수량(04)':i===0?l.goodsQty:'','상품재고금액(04)':i===0?l.goodsAmt:'',
+      '출고수량':oc.qty,'출고원가(총평균)':oc.amt,
+      '상품재고수량(04)':i===0?l.goodsQty:'','상품재고금액(04)':i===0?l.goodsAmt:'','총평균단가':i===0?+l.avgCost.toFixed(4):'',
       '미착품수량(05)':i===0?l.trQty:'','미착품금액(05)':i===0?l.trAmt:'',
       '기말총수량':i===0?l.endQty:'','기말총금액':i===0?l.endAmt:''}));
   });
-  ledRows.push({'Product':'합계','Inbound Code':'','Outbound Code':'','기초수량':t.begQty,'기초금액':t.begAmt,'입고수량(04+05)':t.inQty,'입고금액(04+05)':t.inAmt,'출고수량':t.outQty,'출고금액':t.outAmt,'상품재고수량(04)':t.goodsQty,'상품재고금액(04)':t.goodsAmt,'미착품수량(05)':t.trQty,'미착품금액(05)':t.trAmt,'기말총수량':t.endQty,'기말총금액':t.endAmt});
+  ledRows.push({'Product':'합계','Inbound Code':'','Outbound Code':'','기초수량':t.begQty,'기초금액':t.begAmt,'입고수량(04+05)':t.inQty,'입고금액(04+05)':t.inAmt,'출고수량':t.outQty,'출고원가(총평균)':t.outAmt,'상품재고수량(04)':t.goodsQty,'상품재고금액(04)':t.goodsAmt,'미착품수량(05)':t.trQty,'미착품금액(05)':t.trAmt,'기말총수량':t.endQty,'기말총금액':t.endAmt});
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(inRows),'상품입고');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(outRows),'상품출고');
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(ledRows),'수불부');
-  XLSX.writeFile(wb,'JNFAM_수불부_'+today()+'.xlsx');
+  const avgRows=[]; L.forEach(l=>l.months.forEach(m=>avgRows.push({품목:l.label,월:m.month,'월초수량':m.begQ,'월초금액':r2(m.begA),'입고수량':m.inQ,'입고금액':r2(m.inA),'총평균단가':+m.avg.toFixed(6),'출고수량':m.outQ,'출고원가':r2(m.outC),'월말수량':m.endQ,'월말금액':r2(m.endA),'매출(참고)':r2(m.sales)})));
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(avgRows),'월별총평균');
+  XLSX.writeFile(wb,'JNFAM_수불부_'+(costBasis==='landed'?'운임포함':'구매단가')+'_'+today()+'.xlsx');
 }
 
 /* ================= 초기화 ================= */
-window.app = {trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
+window.app = {setBasis,trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
   syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,resetFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
   loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout,
