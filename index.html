@@ -193,7 +193,7 @@ const SEED = {"inbound": [{"id": "in001", "invType": "상품", "item": "HNO3", "
 <script type="module">
 /* ================= 상태 & 저장소 ================= */
 const state = { inbound:[], outbound:[], beginning:[], master:null, view:'dashboard',
-  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}}, period:{from:'',to:''}, chartMode:'qty',
+  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}, tr:{item:'',basis:'etd',from:'',to:''}}, period:{from:'',to:''}, chartMode:'qty',
   history:[], historyErr:'', histFilter:{user:'',action:'',q:'',from:'',to:''}, histOpen:null };
 let fb = null;
 let charts = {};
@@ -792,20 +792,63 @@ function renderOutbound(){
 }
 
 /* ---------- 미착품 관리 ---------- */
+/* 품목 키: 품목|함량 (예: HF|0.49) */
+const trKey = r => `${r.item}|${+r.purity||0}`;
+const trKeyLabel = k => { const [i,p]=k.split('|'); return `${i} ${pct(p)}`; };
+function trPeriod(kind){
+  const f=state.filters.tr, d=new Date(), y=d.getFullYear(), m=d.getMonth();
+  const ds=x=>`${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`;
+  if(kind==='thisM'){ f.from=ds(new Date(y,m,1)); f.to=ds(new Date(y,m+1,0)); }
+  else if(kind==='lastM'){ f.from=ds(new Date(y,m-1,1)); f.to=ds(new Date(y,m,0)); }
+  else if(kind==='3M'){ f.from=ds(new Date(y,m-2,1)); f.to=ds(new Date(y,m+1,0)); }
+  else if(kind==='year'){ f.from=`${y}-01-01`; f.to=`${y}-12-31`; }
+  else { f.from=''; f.to=''; }
+  render();
+}
 function renderTransit(){
-  const transit = state.inbound.filter(r=>r.invType==='미착품').sort((a,b)=>dstr(a.eta).localeCompare(dstr(b.eta)));
-  const planned = state.inbound.filter(r=>r.invType==='선적예정(미인식)');
-  const converted = state.inbound.filter(r=>r.convert).sort((a,b)=>dstr(b.convert.date).localeCompare(dstr(a.convert.date)));
+  const f=state.filters.tr; if(!f.basis) f.basis='etd';
+  const bDate = r => dstr(f.basis==='eta'?r.eta:r.etd);
+  const pass = r => (!f.item || trKey(r)===f.item) && (!(f.from||f.to) || inRange(bDate(r),f.from,f.to));
+  const allTransit = state.inbound.filter(r=>r.invType==='미착품');
+  const transit = allTransit.filter(pass).sort((a,b)=>dstr(a.eta||a.etd).localeCompare(dstr(b.eta||b.etd)));
+  const planned = state.inbound.filter(r=>r.invType==='선적예정(미인식)').filter(pass);
+  const converted = state.inbound.filter(r=>r.convert).filter(r=>(!f.item||trKey(r)===f.item)&&(!(f.from||f.to)||inRange(dstr(r.convert.date),f.from,f.to)))
+    .sort((a,b)=>dstr(b.convert.date).localeCompare(dstr(a.convert.date)));
   const sumQ=transit.reduce((s,r)=>s+(+r.qty||0),0), sumA=transit.reduce((s,r)=>s+cogc(r),0);
+  const hasF = !!(f.item||f.from||f.to);
+  /* 품목별 요약 (품목 필터와 무관하게 기간 기준으로 전체 품목 표시) */
+  const byKey={}; allTransit.filter(r=>!(f.from||f.to)||inRange(bDate(r),f.from,f.to)).forEach(r=>{ const k=trKey(r); const o=byKey[k]||(byKey[k]={k,n:0,q:0,a:0,first:'',next:''}); o.n++; o.q+=+r.qty||0; o.a+=cogc(r);
+    const e=dstr(r.eta); if(e&&e>=today()&&(!o.next||e<o.next)) o.next=e; });
+  const sumRows=Object.values(byKey).sort((a,b)=>b.a-a.a); const totA=sumRows.reduce((s,o)=>s+o.a,0)||1;
+  const keys=uniq(state.inbound.filter(r=>r.invType==='미착품'||r.invType==='선적예정(미인식)'||r.convert).map(trKey));
+  const per = [['thisM','이번 달'],['lastM','지난 달'],['3M','최근 3개월'],['year','올해']];
   $('main').innerHTML = `
   <h2 class="page-title">미착품 관리</h2>
   <div class="page-sub">FOB 선적 완료 ~ 미국 창고 입고 전 화물. 창고 입고가 완료되면 <b>[입고완료 → 상품 전환]</b>으로 코드가 05 → 04로 자동 전환됩니다.</div>
+  <div class="toolbar">
+    <select class="filter-sel" onchange="app.setFilter('tr','item',this.value)"><option value="" ${!f.item?'selected':''}>품목 전체</option>${keys.map(k=>`<option value="${esc(k)}" ${k===f.item?'selected':''}>${esc(trKeyLabel(k))}</option>`).join('')}</select>
+    <select class="filter-sel" title="기간 기준일" onchange="app.setFilter('tr','basis',this.value)"><option value="etd" ${f.basis==='etd'?'selected':''}>ETD 기준</option><option value="eta" ${f.basis==='eta'?'selected':''}>ETA 기준</option></select>
+    <input type="date" value="${f.from}" title="From" onchange="app.setFilter('tr','from',this.value)"> ~
+    <input type="date" value="${f.to}" title="To" onchange="app.setFilter('tr','to',this.value)">
+    ${per.map(([k,l])=>`<button class="btn ghost sm" onclick="app.trPeriod('${k}')">${l}</button>`).join('')}
+    ${hasF?`<button class="btn ghost sm" onclick="app.resetFilter('tr')">초기화</button>`:''}
+  </div>
+  ${hasF?`<div class="help" style="margin:-6px 0 12px;color:var(--sub);font-size:12px">필터: ${f.item?esc(trKeyLabel(f.item)):'품목 전체'} · ${(f.from||f.to)?`${f.basis.toUpperCase()} ${f.from||'처음'} ~ ${f.to||'끝'}`:'기간 전체'} · 전환 이력은 전환일 기준</div>`:''}
   <div class="cards">
     <div class="kpi b-amber"><div class="k-label">미착품 원재료인식금액</div><div class="k-value">${money(sumA)}</div><div class="k-sub">금액 + 총계(운임·통관·관세)</div></div>
     <div class="kpi b-amber"><div class="k-label">미착품 수량</div><div class="k-value">${fmt(sumQ)} kg</div><div class="k-sub">${transit.length}건</div></div>
     <div class="kpi b-purple"><div class="k-label">선적예정(미인식)</div><div class="k-value">${planned.length}건</div><div class="k-sub">${fmt(planned.reduce((s,r)=>s+(+r.qty||0),0))} kg</div></div>
   </div>
-  <div class="panel"><h3>🚢 운송 중 (미착품 05)</h3><div class="tbl-scroll"><table><thead><tr>
+  <div class="panel"><h3>📦 품목별 미착품 ${(f.from||f.to)?`<span style="font-weight:400;color:var(--sub);font-size:12px">· ${f.basis.toUpperCase()} ${f.from||'처음'} ~ ${f.to||'끝'}</span>`:''}</h3><div class="tbl-scroll"><table><thead><tr>
+    <th>품목</th><th class="num">건수</th><th class="num">수량(kg)</th><th class="num">원재료인식($)</th><th class="num">금액 비중</th><th>가장 빠른 ETA</th><th></th>
+  </tr></thead><tbody>
+  ${sumRows.length? sumRows.map(o=>`<tr ${o.k===f.item?'style="background:var(--amber-l)"':''}><td><b>${esc(trKeyLabel(o.k))}</b></td><td class="num">${o.n}</td><td class="num">${fmt(o.q)}</td><td class="num">${fmt2(o.a)}</td>
+    <td class="num">${(o.a/totA*100).toFixed(1)}%</td><td>${o.next||'-'}</td>
+    <td>${o.k===f.item?`<button class="btn ghost sm" onclick="app.setFilter('tr','item','')">전체 보기</button>`:`<button class="btn ghost sm" onclick="app.setFilter('tr','item','${esc(o.k)}')">이 품목만</button>`}</td></tr>`).join('')
+    +`<tr style="font-weight:700;border-top:2px solid var(--line)"><td>합계</td><td class="num">${sumRows.reduce((s,o)=>s+o.n,0)}</td><td class="num">${fmt(sumRows.reduce((s,o)=>s+o.q,0))}</td><td class="num">${fmt2(sumRows.reduce((s,o)=>s+o.a,0))}</td><td class="num">100%</td><td></td><td></td></tr>`
+    :'<tr><td colspan="7" class="empty">해당 기간의 미착품이 없습니다</td></tr>'}
+  </tbody></table></div></div>
+  <div class="panel"><h3>🚢 운송 중 (미착품 05) ${hasF?`<span style="font-weight:400;color:var(--sub);font-size:12px">· ${transit.length} / ${allTransit.length}건</span>`:''}</h3><div class="tbl-scroll"><table><thead><tr>
     <th>미착품 코드</th><th>품목</th><th class="num">수량(kg)</th><th class="num">원재료인식($)</th><th>ETD</th><th>ETA</th><th>도착까지</th><th>INVOICE</th><th></th>
   </tr></thead><tbody>
   ${transit.length? transit.map(r=>{
@@ -815,7 +858,7 @@ function renderTransit(){
     <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}</td><td>${r.etd||'-'}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
     <td>${esc(r.invoice)||'-'}</td>
     <td><button class="btn green" onclick="app.convertModal('${r.id}')">✓ 입고완료 → 상품 전환</button></td></tr>`;
-  }).join(''):'<tr><td colspan="9" class="empty">운송 중인 미착품이 없습니다</td></tr>'}
+  }).join(''):`<tr><td colspan="9" class="empty">${hasF?'조건에 맞는 미착품이 없습니다':'운송 중인 미착품이 없습니다'}</td></tr>`}
   </tbody></table></div></div>
   <div class="panel"><h3>📋 전환 이력 (미착품 → 상품)</h3><div class="tbl-scroll"><table><thead><tr>
     <th>전환일</th><th>이전 코드 (05)</th><th>현재 코드 (04)</th><th>품목</th><th class="num">수량(kg)</th><th>창고입고일</th>
@@ -1169,7 +1212,7 @@ function setFilter(k,field,v){
   if(id){ const el=$(id); if(el){ el.focus(); try{ el.setSelectionRange(pos,pos); }catch(e){} } }
 }
 function resetFilter(k){
-  state.filters[k] = k==='in' ? {type:'전체',item:'',supplier:'',q:'',from:'',to:''} : {cat:'전체',item:'',buyer:'',q:'',from:'',to:''};
+  state.filters[k] = k==='in' ? {type:'전체',item:'',supplier:'',q:'',from:'',to:''} : k==='tr' ? {item:'',basis:state.filters.tr.basis||'etd',from:'',to:''} : {cat:'전체',item:'',buyer:'',q:'',from:'',to:''};
   render();
 }
 async function setBeg(i,k,v){
@@ -1230,7 +1273,7 @@ function exportExcel(){
 }
 
 /* ================= 초기화 ================= */
-window.app = {inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
+window.app = {trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
   syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,resetFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
   loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout,
