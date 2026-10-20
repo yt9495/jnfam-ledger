@@ -1,8 +1,5 @@
 <!DOCTYPE html>
-<!--
-  © 2025–2026 Young Tai Kang. All rights reserved.
-  Unauthorized use, copying, modification, or distribution without the written permission of Young Tai Kang is prohibited.
--->
+<!-- © 2025–2026 Young Tai Kang. All rights reserved. Unauthorized use, copying, modification, or distribution without the written permission of Young Tai Kang is prohibited. -->
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
@@ -148,6 +145,17 @@ select:focus,input:focus,textarea:focus{outline:2px solid #bfd3ff;border-color:v
 tr.hist-row{cursor:pointer} tr.hist-row:hover td{background:#f8fafc}
 .help code{background:#f1f5f9;padding:1px 5px;border-radius:4px;font-size:11.5px}
 .mono{font-family:Consolas,monospace;font-size:12px}
+/* 운임·관세 미확정 */
+.tag.est-miss{background:var(--red-l);color:var(--red)}
+.tag.est-def{background:var(--amber-l);color:var(--amber)}
+.est-val{font-style:italic;color:var(--amber)}
+tr.row-est td:first-child{box-shadow:inset 3px 0 0 var(--red)}
+tr.row-est td{background:#fffaf5}
+.banner.cost-warn{background:var(--red-l);border-color:#fca5a5;color:#7f1d1d}
+.banner .b-act{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.cost-ok{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--sub);margin-top:4px;font-weight:400}
+.cost-ok input{width:auto}
+.cost-hint{font-size:11.5px;margin-top:3px}
 .days-late{color:var(--red);font-weight:700} .days-soon{color:var(--amber);font-weight:700}
 /* ===== Inventory Ledger (엑셀 원본 양식) ===== */
 .ledger-tbl{border:2px solid #d33;font-size:12.5px}
@@ -167,7 +175,7 @@ tr.hist-row{cursor:pointer} tr.hist-row:hover td{background:#f8fafc}
   <nav class="sidebar">
     <div class="logo"><b>JNFAM 수불부</b><span>Inventory Ledger System · 2026</span></div>
     <div class="nav-item active" data-view="dashboard">📊 대시보드</div>
-    <div class="nav-item" data-view="inbound">📥 상품입고</div>
+    <div class="nav-item" data-view="inbound">📥 상품입고 <span class="badge" id="costBadge" style="display:none;background:var(--red)" title="운임·관세 미확정"></span></div>
     <div class="nav-item" data-view="outbound">📤 상품출고</div>
     <div class="nav-item" data-view="transit">🚢 미착품 관리 <span class="badge" id="transitBadge" style="display:none"></span></div>
     <div class="nav-item" data-view="ledger">📒 수불부</div>
@@ -197,7 +205,7 @@ const SEED = {"inbound": [{"id": "in001", "invType": "상품", "item": "HNO3", "
 <script type="module">
 /* ================= 상태 & 저장소 ================= */
 const state = { inbound:[], outbound:[], beginning:[], master:null, view:'dashboard',
-  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}, tr:{item:'',basis:'etd',from:'',to:''}}, period:{from:'',to:''}, chartMode:'qty',
+  filters:{in:{type:'전체',item:'',supplier:'',q:'',from:'',to:'',cost:''}, out:{cat:'전체',item:'',buyer:'',q:'',from:'',to:''}, tr:{item:'',basis:'etd',from:'',to:''}}, period:{from:'',to:''}, chartMode:'qty',
   history:[], historyErr:'', histFilter:{user:'',action:'',q:'',from:'',to:''}, histOpen:null };
 let fb = null;
 let charts = {};
@@ -214,11 +222,11 @@ const DEFAULT_FB = {
 
 function localLoad(){
   const raw = localStorage.getItem(LSKEY);
-  if(raw){ try{ const d=JSON.parse(raw); Object.assign(state,{inbound:d.inbound||[],outbound:d.outbound||[],beginning:d.beginning||[],master:d.master||SEED.master,checks:d.checks||{}}); return true; }catch(e){} }
+  if(raw){ try{ const d=JSON.parse(raw); Object.assign(state,{inbound:d.inbound||[],outbound:d.outbound||[],beginning:d.beginning||[],master:d.master||SEED.master,checks:d.checks||{},costDefaults:d.costDefaults||null}); return true; }catch(e){} }
   return false;
 }
 function localSave(){
-  localStorage.setItem(LSKEY, JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master,checks:state.checks||{}}));
+  localStorage.setItem(LSKEY, JSON.stringify({inbound:state.inbound,outbound:state.outbound,beginning:state.beginning,master:state.master,checks:state.checks||{},costDefaults:state.costDefaults||null}));
 }
 const HISTKEY='jnfam_ledger_history';
 function localHistLoad(){ try{ state.history=JSON.parse(localStorage.getItem(HISTKEY)||'[]'); }catch(e){ state.history=[]; } }
@@ -250,7 +258,7 @@ const COL_LABEL = {inbound:'입고', outbound:'출고', config:'설정'};
 const FIELD_LABEL = {
   invType:'재고구분', item:'품목', purity:'함량', supplier:'구매처', pack:'용기', etd:'ETD', eta:'ETA', plantEta:'창고입고일',
   bl:'BL', invoice:'INVOICE', qty:'수량', price:'단가', amount:'금액', freight:'해상운송료', cc:'통관비', duty:'관세',
-  trucking:'운송비', etc:'기타비용', note:'비고', manager:'담당', category:'구분', buyer:'판매처', date:'출고일', shuttle:'Shuttle'
+  trucking:'운송비', etc:'기타비용', freightSrc:'운임 상태', dutySrc:'관세 상태', note:'비고', manager:'담당', category:'구분', buyer:'판매처', date:'출고일', shuttle:'Shuttle'
 };
 function diffFields(col, before, patch){
   const out=[];
@@ -266,7 +274,8 @@ function diffFields(col, before, patch){
   return out;
 }
 function fmtVal(k,v){
-  if(v==null||v==='') return '(빈값)';
+  if(v==null||v==='') return k.endsWith('Src')? '미입력' : '(빈값)';
+  if(k.endsWith('Src')) return ({actual:'확정',default:'기본값(미확정)'})[v]||String(v);
   if(k==='purity') return pct(v);
   if(typeof v==='number') return (['qty'].includes(k)? fmt(v) : fmt2(v));
   return String(v);
@@ -303,7 +312,7 @@ const absTime = ms => { const d=new Date(ms); const z=n=>String(n).padStart(2,'0
 const histTag = h => `<span class="tag h-${h.kind||'upd'}">${esc(h.action)}</span>`;
 const chgText = (h,n) => { const c=h.changes||[]; if(!c.length) return ''; const s=c.slice(0,n).map(x=>`${x.label} ${x.from}→${x.to}`).join(', '); return s+(c.length>n?` 외 ${c.length-n}건`:''); };
 async function saveConfigDoc(){
-  if(fb){ await fb.setDoc(fb.doc(fb.db,'config','app'), {beginning:state.beginning, master:state.master}, {merge:true}); }
+  if(fb){ const c={beginning:state.beginning, master:state.master}; if(state.costDefaults) c.costDefaults=state.costDefaults; await fb.setDoc(fb.doc(fb.db,'config','app'), c, {merge:true}); }
   else { localSave(); render(); }
 }
 
@@ -373,7 +382,7 @@ function startListeners(fsM, db, cfg){
     }, onErr));
   });
   unsubs.push(fsM.onSnapshot(fsM.doc(db,'config','app'), d=>{
-    if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; state.checks=c.checks||{}; }
+    if(d.exists()){ const c=d.data(); if(c.beginning) state.beginning=c.beginning; if(c.master) state.master=c.master; state.checks=c.checks||{}; state.costDefaults=c.costDefaults||null; }
     arrived('config'); render();
   }, onErr));
   /* 변경 이력: 최근 500건 실시간 구독 — 실패해도 본 데이터 연결에는 영향 없음 */
@@ -440,7 +449,23 @@ const abbr = item => { const m=(state.master||SEED.master).items.find(i=>i.name=
 const supShort = s => s==='JNF CO.,LTD.' ? 'JNF' : (s||'').replace(/[^A-Za-z0-9]/g,'').slice(0,8);
 const inCode  = r => (PREFIX[r.invType]||'04') + abbr(r.item) + r.pack + supShort(r.supplier) + pct(r.purity);
 const outCode = r => '04' + r.item + r.pack + (r.buyer||'') + pct(r.purity);
-const capCost = r => (+r.freight||0)+(+r.cc||0)+(+r.duty||0);   // 총계(자본화) = 해상운송료+통관비+관세 (엑셀 R열)
+/* ===== 해상운송료·관세: 실제(확정) / 기본값(미확정) / 미입력 =====
+   ▸ freightSrc·dutySrc: 'actual' = 실제 금액 확정, 'default' = 기본값으로 채움(미확정)
+   ▸ src 없음: 값 > 0 이면 확정(기존 데이터), 비었거나 0이면 '미입력' → 원가 계산에는 기본값 추정치 적용
+   ▸ 미입력·기본값 건은 실제 금액이 입력·확정될 때까지 계속 경고 */
+const DEF_COST = {freight:11500, duty:{HF:0, HNO3:0.125, HCl:0.125}};
+const costDef = () => state.costDefaults || DEF_COST;
+const TRACK = r => r.invType==='상품' || r.invType==='미착품';
+function costSt(r,f){ const src=r[f+'Src']; if(src==='actual'||src==='default') return src; return (+r[f]>0)?'actual':'missing'; }
+const dutyRate = item => { const v=(costDef().duty||{})[item]; return (v===''||v==null||isNaN(+v))? null : +v; };
+const estFreight = r => +costDef().freight||0;
+const estDuty = r => { const t=dutyRate(r.item); return t==null? 0 : Math.round((+r.amount||0)*t*100)/100; };
+const effFreight = r => costSt(r,'freight')==='missing' ? estFreight(r) : (+r.freight||0);
+const effDuty = r => costSt(r,'duty')==='missing' ? estDuty(r) : (+r.duty||0);
+const isEst = r => costSt(r,'freight')!=='actual' || costSt(r,'duty')!=='actual';
+const pendingCost = () => state.inbound.filter(r=>TRACK(r) && isEst(r));
+const ST_TXT = {missing:'미입력', default:'기본값', actual:'확정'};
+const capCost = r => effFreight(r)+(+r.cc||0)+effDuty(r);   // 총계(자본화) = 해상운송료+통관비+관세 (미입력은 기본값 추정)
 const cogc = r => (+r.amount||0) + capCost(r);                  // 원재료인식금액 = 금액+총계 (엑셀 Q열)
 const fmt = n => (n==null||isNaN(n)) ? '-' : Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
 const fmt2 = n => (n==null||isNaN(n)) ? '-' : Number(n).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
@@ -603,7 +628,6 @@ function checkItems(){
   const inDesc = r => `${esc(r.invoice||'-')} · ${esc(r.item)} ${pct(r.purity)} · ${fmt(r.qty)} kg · ETD ${r.etd||'-'} · 입고 ${r.plantEta||'-'}`;
   const outDesc = r => `${esc(r.buyer||'-')} · ${r.date||'-'} · ${esc(r.item)} ${pct(r.purity)} ${esc(r.pack||'')} · ${fmt(r.qty)} kg · $${fmt2(r.amount)}`;
   state.inbound.filter(r=>r.invType==='미착품' && !shipD(r)).forEach(r=>add('noetd','in',[r],inDesc(r)));
-  if(costBasis!=='price') state.inbound.filter(r=>r.invType==='상품' && !(+r.freight) && !(+r.cc) && !(+r.duty)).forEach(r=>add('nofr','in',[r],inDesc(r)));
   state.inbound.filter(r=>r.invType==='상품' && dstr(r.etd) && dstr(r.plantEta) && r.etd>r.plantEta).forEach(r=>add('date','in',[r],inDesc(r)));
   const invMap={}; state.inbound.forEach(r=>{ if(!r.invoice) return; const k=r.invoice+'|'+r.item+'|'+r.purity; (invMap[k]=invMap[k]||[]).push(r); });
   Object.values(invMap).filter(a=>a.length>1).forEach(a=>add('dupinv','in',a,`${esc(a[0].invoice)} · ${esc(a[0].item)} ${pct(a[0].purity)} · 입고일 ${a.map(r=>r.plantEta||r.etd||'-').join(', ')}`));
@@ -622,7 +646,8 @@ function checkItems(){
 function dataChecks(){
   const open=checkItems().filter(i=>!i.closed); const by={};
   open.forEach(i=>{ (by[i.cat]=by[i.cat]||[]).push(i); });
-  return Object.entries(by).map(([c,a])=>`${CHK_CAT[c].label} ${a.length}건 — ${CHK_CAT[c].act}`);
+  const P=pendingCost(); const pre = P.length? [`운임·관세 미확정 ${P.length}건 — 원가에 기본값 추정 적용 중 (상품입고 시트 '운임상태'·'관세상태' 열 참고)`] : [];
+  return pre.concat(Object.entries(by).map(([c,a])=>`${CHK_CAT[c].label} ${a.length}건 — ${CHK_CAT[c].act}`));
 }
 async function saveChecks(patch){
   state.checks = Object.assign({}, state.checks||{}, patch);
@@ -743,6 +768,7 @@ function periodBar(){
 function render(){
   const badge=$('transitBadge'); const trCnt=state.inbound.filter(r=>r.invType==='미착품').length;
   badge.style.display = trCnt? 'inline-block':'none'; badge.textContent = trCnt;
+  const cb=$('costBadge'); const pc=pendingCost().length; cb.style.display = pc? 'inline-block':'none'; cb.textContent = pc;
   const v=state.view;
   if(v==='dashboard') renderDashboard();
   else if(v==='inbound') renderInbound();
@@ -761,6 +787,7 @@ function renderDashboard(){
   $('main').innerHTML = `
   <h2 class="page-title">대시보드</h2>
   <div class="page-sub">원재료별 상품(창고 재고) 수량 중심으로 관리합니다 · 금액 현황은 페이지 하단 · 기준일 ${today()}</div>
+  ${costWarnBanner()}
   ${recentPanel()}
   ${periodBar()}
   ${!state.inbound.length? `<div class="banner">⚠️ 데이터가 없습니다. <b>설정 → 기존 엑셀 데이터 불러오기</b>를 실행하세요. <button class="btn primary sm" onclick="app.loadSeed()">지금 불러오기</button></div>`:''}
@@ -789,7 +816,7 @@ function renderDashboard(){
       ${upcoming.length? upcoming.map(r=>{
         const dd = r.eta? Math.ceil((new Date(r.eta)-new Date(today()))/864e5) : null;
         const ddTxt = dd==null?'-': dd<0? `<span class="days-late">${-dd}일 지연</span>` : dd<=7? `<span class="days-soon">D-${dd}</span>` : 'D-'+dd;
-        return `<tr><td>${invTag(r.invType)}</td><td>${esc(r.item)} ${pct(r.purity)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
+        return `<tr><td>${invTag(r.invType)}</td><td>${esc(r.item)} ${pct(r.purity)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}${estTag(r)}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
         <td>${r.invType==='미착품'? `<button class="btn green sm" onclick="app.convertModal('${r.id}')">입고완료</button>`:''}</td></tr>`;
       }).join(''): '<tr><td colspan="7" class="empty">입고 예정 건이 없습니다</td></tr>'}
       </tbody></table></div>
@@ -921,11 +948,19 @@ function renderInbound(){
   if(f.supplier) rows=rows.filter(r=>r.supplier===f.supplier);
   if(f.from||f.to) rows=rows.filter(r=>inRange(dstr(effInDate(r)),f.from,f.to));
   if(f.q) rows=rows.filter(r=>matchQ(f.q,[inCode(r),r.item,pct(r.purity),r.supplier,r.pack,r.invoice,r.bl,r.note,r.manager]));
-  const hasF = f.type!=='전체'||f.item||f.supplier||f.q||f.from||f.to;
+  if(f.cost==='pending') rows=rows.filter(r=>TRACK(r)&&isEst(r));
+  else if(f.cost==='missing') rows=rows.filter(r=>TRACK(r)&&(costSt(r,'freight')==='missing'||costSt(r,'duty')==='missing'));
+  else if(f.cost==='default') rows=rows.filter(r=>TRACK(r)&&(costSt(r,'freight')==='default'||costSt(r,'duty')==='default'));
+  else if(f.cost==='actual') rows=rows.filter(r=>!isEst(r));
+  const hasF = f.type!=='전체'||f.item||f.supplier||f.q||f.from||f.to||f.cost;
   $('main').innerHTML = `
   <h2 class="page-title">상품입고 (INBOUND)</h2>
   <div class="page-sub">재고구분: 선적예정(00·미인식) → 미착품(05·FOB 선적완료) → 상품(04·창고 입고완료). 코드는 자동 생성됩니다.</div>
+  ${costWarnBanner(true)}
   <div class="toolbar">
+    <select class="filter-sel" onchange="app.setFilter('in','cost',this.value)" title="운임·관세 상태">
+      ${[['','운임·관세 전체'],['pending','⚠️ 미확정 (미입력+기본값)'],['missing','미입력만'],['default','기본값 적용만'],['actual','확정만']].map(([v,l])=>`<option value="${v}" ${v===(f.cost||'')?'selected':''}>${l}</option>`).join('')}
+    </select>
     <select class="filter-sel" onchange="app.setFilter('in','type',this.value)">
       ${['전체','상품','미착품','선적예정(미인식)'].map(o=>`<option ${o===f.type?'selected':''}>${o}</option>`).join('')}
     </select>
@@ -942,20 +977,21 @@ function renderInbound(){
   ${filterSummary(rows,hasF)}
   <div class="panel tbl-scroll"><table><thead><tr>
     <th>재고구분</th><th>코드</th><th>품목</th><th>함량</th><th>용기</th><th>ETD</th><th>ETA</th><th>창고입고일</th><th>INVOICE</th>
-    <th class="num">수량(kg)</th><th class="num">단가</th><th class="num">금액($)</th><th class="num">총계*</th><th class="num">원재료인식($)</th><th></th>
+    <th class="num">수량(kg)</th><th class="num">단가</th><th class="num">금액($)</th><th class="num">해상운송료</th><th class="num">관세</th><th class="num">총계*</th><th class="num">원재료인식($)</th><th></th>
   </tr></thead><tbody>
-  ${rows.length? rows.map(r=>`<tr>
+  ${rows.length? rows.map(r=>`<tr class="${TRACK(r)&&isEst(r)?'row-est':''}">
     <td>${invTag(r.invType)}</td><td class="mono">${inCode(r)}</td><td>${esc(r.item)}</td><td>${pct(r.purity)}</td><td>${esc(r.pack)}</td>
     <td>${r.etd||'-'}</td><td>${r.eta||'-'}</td><td>${r.plantEta||'-'}</td><td>${esc(r.invoice)||'-'}</td>
     <td class="num">${fmt(r.qty)}</td><td class="num">${r.price?Number(r.price).toFixed(4):'-'}</td><td class="num">${fmt2(r.amount)}</td>
+    <td class="num">${costCell(r,'freight')}</td><td class="num">${costCell(r,'duty')}</td>
     <td class="num">${fmt2(capCost(r))}</td><td class="num"><b>${fmt2(cogc(r))}</b></td>
     <td>${r.invType==='미착품'?`<button class="btn green sm" onclick="app.convertModal('${r.id}')">입고완료</button> `:''}
         ${r.invType==='선적예정(미인식)'?`<button class="btn sm" style="background:var(--amber-l);color:var(--amber)" onclick="app.shipModal('${r.id}')">선적완료</button> `:''}
         <button class="btn ghost sm" onclick="app.inboundModal('${r.id}')">수정</button>
         <button class="btn danger sm" onclick="app.del('inbound','${r.id}')">삭제</button></td>
-  </tr>`).join(''):`<tr><td colspan="15" class="empty">${hasF?'검색 조건에 맞는 입고 데이터가 없습니다':'입고 데이터가 없습니다'}</td></tr>`}
+  </tr>`).join(''):`<tr><td colspan="17" class="empty">${hasF?'검색 조건에 맞는 입고 데이터가 없습니다':'입고 데이터가 없습니다'}</td></tr>`}
   </tbody></table>
-  <div class="help" style="margin-top:8px">* 총계 = 해상운송료+통관비+관세 (원재료인식금액에 포함). 운송비·기타비용은 별도 관리.</div></div>`;
+  <div class="help" style="margin-top:8px">* 총계 = 해상운송료+통관비+관세 (원재료인식금액에 포함). 운송비·기타비용은 별도 관리. · <span class="tag est-miss">미입력</span> = 실제 금액 없음 → 기본값 추정치로 원가 계산 · <span class="tag est-def">기본값</span> = 기본값이 입력돼 있으나 실제 금액 미확정 · 기울임 금액 = 추정치</div></div>`;
 }
 
 /* ---------- 상품출고 ---------- */
@@ -1035,6 +1071,7 @@ function renderTransit(){
   $('main').innerHTML = `
   <h2 class="page-title">미착품 관리</h2>
   <div class="page-sub">FOB 선적 완료 ~ 미국 창고 입고 전 화물. 창고 입고가 완료되면 <b>[입고완료 → 상품 전환]</b>으로 코드가 05 → 04로 자동 전환됩니다.</div>
+  ${costWarnBanner()}
   <div class="toolbar">
     <select class="filter-sel" onchange="app.setFilter('tr','item',this.value)"><option value="" ${!f.item?'selected':''}>품목 전체</option>${keys.map(k=>`<option value="${esc(k)}" ${k===f.item?'selected':''}>${esc(trKeyLabel(k))}</option>`).join('')}</select>
     <select class="filter-sel" title="기간 기준일" onchange="app.setFilter('tr','basis',this.value)"><option value="etd" ${f.basis==='etd'?'selected':''}>ETD 기준</option><option value="eta" ${f.basis==='eta'?'selected':''}>ETA 기준</option></select>
@@ -1065,7 +1102,7 @@ function renderTransit(){
     const dd=r.eta?Math.ceil((new Date(r.eta)-new Date(today()))/864e5):null;
     const ddTxt = dd==null?'-': dd<0?`<span class="days-late">${-dd}일 지연</span>`: dd<=7?`<span class="days-soon">D-${dd}</span>`:'D-'+dd;
     return `<tr><td class="mono" style="color:var(--amber);font-weight:700">${inCode(r)}</td><td>${esc(r.item)} ${pct(r.purity)}</td>
-    <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}</td><td>${r.etd||'-'}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
+    <td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(cogc(r))}${estTag(r)}</td><td>${r.etd||'-'}</td><td>${r.eta||'-'}</td><td>${ddTxt}</td>
     <td>${esc(r.invoice)||'-'}</td>
     <td><button class="btn green" onclick="app.convertModal('${r.id}')">✓ 입고완료 → 상품 전환</button></td></tr>`;
   }).join(''):`<tr><td colspan="9" class="empty">${hasF?'조건에 맞는 미착품이 없습니다':'운송 중인 미착품이 없습니다'}</td></tr>`}
@@ -1122,6 +1159,7 @@ function renderLedger(){
     <button class="btn primary" onclick="app.exportExcel()">📄 수불부 엑셀 내보내기</button></div>
   <div class="page-sub">기준일 <b>${asOf}</b> 시점으로 상품(04·창고)과 미착품(05·운송중)을 나눠 관리합니다 · 상품 = ${AVGS[avgMethod].label} (${basisLabel()}) · 미착품 = 건별 ${amtLabel()} · 선적예정(00)·충전은 제외</div>
   ${periodBar()}
+  ${costWarnBanner()}
   ${checksPanel()}
   <div class="cards">
     <div class="kpi b-green"><div class="k-label">상품 재고 (04·창고)</div><div class="k-value">${money(t.goodsAmt||0)}</div><div class="k-sub">${fmt(t.goodsQty)} kg · ${asOf} 기준</div></div>
@@ -1171,7 +1209,7 @@ function renderLedger(){
   </div>
   ${avgPanel(L)}
   <div class="panel"><h3>기말 미착품 내역 (${asOf} 기준)</h3><div class="tbl-scroll"><table><thead><tr><th>품목</th><th>INVOICE</th><th>ETD</th><th>창고입고일</th><th>현재 구분</th><th class="num">수량(kg)</th><th class="num">${amtLabel()}($)</th></tr></thead><tbody>
-  ${L.flatMap(l=>l.trList.map(r=>`<tr><td>${esc(l.label)}</td><td class="mono">${esc(r.invoice)||'-'}</td><td>${shipD(r)}</td><td>${arrD(r)||'-'}</td><td>${invTag(r.invType)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(invCost(r))}</td></tr>`)).join('') || '<tr><td colspan="7" class="empty">미착품이 없습니다</td></tr>'}
+  ${L.flatMap(l=>l.trList.map(r=>`<tr><td>${esc(l.label)}</td><td class="mono">${esc(r.invoice)||'-'}</td><td>${shipD(r)}</td><td>${arrD(r)||'-'}</td><td>${invTag(r.invType)}</td><td class="num">${fmt(r.qty)}</td><td class="num">${fmt2(invCost(r))}${estTag(r)}</td></tr>`)).join('') || '<tr><td colspan="7" class="empty">미착품이 없습니다</td></tr>'}
   </tbody></table></div></div>`;
 }
 
@@ -1227,6 +1265,14 @@ function renderSettings(){
         <td><input type="text" style="width:180px" value="${esc(b.note||'')}" placeholder="예: 2025 결산 재고자산 명세" onchange="app.setBegNote(${i},this.value)"></td></tr>`; }).join('')}
       </tbody></table>
     </div>
+    <div class="panel"><h3>🚢 운임·관세 기본값 (미입력 Lot 추정용)</h3>
+      <div class="help" style="margin-bottom:8px">상품·미착품 Lot에 실제 해상운송료·관세가 없으면 아래 값으로 원가를 추정하고 <b>미확정 경고</b>를 띄웁니다. 관세 = 인보이스 금액 × 관세율. 관세율을 비우면 해당 품목은 추정 관세 0 (경고는 유지).</div>
+      <table><tbody>
+        <tr><td>해상운송료 ($ / Lot)</td><td class="num"><input type="number" step="0.01" id="cd_freight" style="width:130px;text-align:right" value="${costDef().freight??''}"></td></tr>
+        ${M.items.map(i=>`<tr><td>${esc(i.name)} 관세율 (%)</td><td class="num"><input type="number" step="0.01" id="cd_${esc(i.name)}" style="width:130px;text-align:right" value="${dutyRate(i.name)==null?'':+(dutyRate(i.name)*100).toFixed(4)}" placeholder="없음"></td></tr>`).join('')}
+      </tbody></table>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn primary" onclick="app.saveCostDefaults()">저장</button><button class="btn ghost" onclick="app.dutyBatchModal()">관세 일괄 적용…</button></div>
+    </div>
     <div class="panel"><h3>🏷️ 마스터</h3>
       <div class="help">품목: ${M.items.map(i=>`${i.name}(${i.purities.map(p=>pct(p)).join(', ')})`).join(' · ')}<br>
       구매처: ${M.suppliers.join(', ')} · 판매처: ${M.buyers.join(', ')} · 용기: ${M.packs.join(', ')}</div>
@@ -1242,7 +1288,9 @@ function renderSettings(){
 /* ================= 입력 모달 ================= */
 function inboundModal(id){
   const M=state.master||SEED.master;
-  const r = id? state.inbound.find(x=>x.id===id) : {invType:'미착품',item:'HF',purity:0.49,supplier:M.suppliers[0],pack:'IBC',etd:'',eta:'',plantEta:'',bl:'',invoice:'',qty:'',price:'',amount:'',freight:0,cc:0,duty:0,trucking:0,etc:0,note:''};
+  const r = id? state.inbound.find(x=>x.id===id) : {invType:'미착품',item:'HF',purity:0.49,supplier:M.suppliers[0],pack:'IBC',etd:'',eta:'',plantEta:'',bl:'',invoice:'',qty:'',price:'',amount:'',freight:null,cc:0,duty:null,trucking:0,etc:0,note:''};
+  const cv = f => costSt(r,f)==='missing' ? '' : (r[f]??'');
+  const ck = f => costSt(r,f)==='actual' ? 'checked' : '';
   const purityOpts = it => (M.items.find(x=>x.name===it)?.purities||[r.purity]).map(p=>`<option value="${p}" ${+p===+r.purity?'selected':''}>${pct(p)}</option>`).join('');
   openModal(`
   <h3>${id?'입고 수정':'신규 입고 등록'}</h3>
@@ -1260,9 +1308,11 @@ function inboundModal(id){
     <div class="fld"><label>수량 (kg) *</label><input type="number" id="f_qty" value="${r.qty}" oninput="app.calcIn()"></div>
     <div class="fld"><label>단가 ($/kg)</label><input type="number" step="0.0001" id="f_price" value="${r.price}" oninput="app.calcIn(true)"></div>
     <div class="fld"><label>금액 ($) — 자동계산</label><input type="number" step="0.01" id="f_amount" value="${r.amount}" oninput="app.calcIn()"></div>
-    <div class="fld"><label>해상운송료</label><input type="number" step="0.01" id="f_freight" value="${r.freight}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>해상운송료 <a href="#" style="font-weight:400" onclick="app.fillDefault('freight');return false">기본값</a></label><input type="number" step="0.01" id="f_freight" value="${cv('freight')}" placeholder="미입력 시 추정 적용" oninput="app.costTouched('freight')">
+      <label class="cost-ok"><input type="checkbox" id="f_freightOk" ${ck('freight')} onchange="app.calcIn()"> 실제 금액 확정</label><div class="cost-hint" id="f_freightHint"></div></div>
     <div class="fld"><label>통관비</label><input type="number" step="0.01" id="f_cc" value="${r.cc}" oninput="app.calcIn()"></div>
-    <div class="fld"><label>관세</label><input type="number" step="0.01" id="f_duty" value="${r.duty}" oninput="app.calcIn()"></div>
+    <div class="fld"><label>관세 <a href="#" style="font-weight:400" onclick="app.fillDefault('duty');return false">기본값</a></label><input type="number" step="0.01" id="f_duty" value="${cv('duty')}" placeholder="미입력 시 추정 적용" oninput="app.costTouched('duty')">
+      <label class="cost-ok"><input type="checkbox" id="f_dutyOk" ${ck('duty')} onchange="app.calcIn()"> 실제 금액 확정</label><div class="cost-hint" id="f_dutyHint"></div></div>
     <div class="fld"><label>운송비 (자본화 제외)</label><input type="number" step="0.01" id="f_trucking" value="${r.trucking}" oninput="app.calcIn()"></div>
     <div class="fld"><label>기타비용 (자본화 제외)</label><input type="number" step="0.01" id="f_etc" value="${r.etc}" oninput="app.calcIn()"></div>
     <div class="fld"><label>비고</label><input type="text" id="f_note" value="${esc(r.note)}"></div>
@@ -1287,17 +1337,25 @@ function calcIn(fromPrice){
   if(fromPrice && qty && price) $('f_amount').value=(qty*price).toFixed(2);
   const amount=+$('f_amount').value||0;
   if(qty && amount && !price) $('f_price').value=(amount/qty).toFixed(4);
+  const F=readCost('freight'), D=readCost('duty');
   const r={invType:$('f_invType').value,item:$('f_item').value,purity:+$('f_purity').value,supplier:$('f_supplier').value,pack:$('f_pack').value,
-    freight:+$('f_freight').value||0,cc:+$('f_cc').value||0,duty:+$('f_duty').value||0,trucking:+$('f_trucking').value||0,etc:+$('f_etc').value||0,amount};
+    freight:F.v,freightSrc:F.src,cc:+$('f_cc').value||0,duty:D.v,dutySrc:D.src,trucking:+$('f_trucking').value||0,etc:+$('f_etc').value||0,amount};
+  ['freight','duty'].forEach(f=>{ const st=costSt(r,f), el=$('f_'+f+'Hint'); if(!el) return;
+    const rt=dutyRate(r.item);
+    el.innerHTML = st==='actual' ? '<span style="color:var(--green)">✓ 확정</span>'
+      : st==='default' ? '<span class="tag est-def">기본값 · 미확정</span> 실제 금액 확인 후 체크'
+      : `<span class="tag est-miss">미입력</span> 추정 $${fmt2(f==='freight'?estFreight(r):estDuty(r))} 적용${f==='duty'?(rt==null?' (기본 관세율 없음)':' ('+(rt*100).toFixed(1)+'%)'):''}`; });
   const cp=$('codePreview'); cp.textContent=inCode(r); cp.className='code-preview'+(r.invType==='미착품'?' transit':'');
-  $('calcBox').innerHTML=`<span>금액: <b>$${fmt2(amount)}</b></span><span>총계(운임+통관+관세): <b>$${fmt2(capCost(r))}</b></span><span>원재료인식금액: <b style="color:var(--blue)">$${fmt2(cogc(r))}</b></span><span style="color:var(--sub)">운송비·기타: $${fmt2((+r.trucking||0)+(+r.etc||0))}</span>`;
+  $('calcBox').innerHTML=`<span>금액: <b>$${fmt2(amount)}</b></span><span>총계(운임+통관+관세): <b>$${fmt2(capCost(r))}</b>${isEst(r)?' <span class="tag est-miss">추정 포함</span>':''}</span><span>원재료인식금액: <b style="color:var(--blue)">$${fmt2(cogc(r))}</b></span><span style="color:var(--sub)">운송비·기타: $${fmt2((+r.trucking||0)+(+r.etc||0))}</span>`;
 }
 async function saveInbound(id){
   const rec={invType:$('f_invType').value,item:$('f_item').value,purity:+$('f_purity').value,supplier:$('f_supplier').value,pack:$('f_pack').value,
     etd:$('f_etd').value,eta:$('f_eta').value,plantEta:$('f_plantEta').value,bl:$('f_bl').value,invoice:$('f_invoice').value,
     qty:+$('f_qty').value||0,price:+$('f_price').value||0,amount:+$('f_amount').value||0,
-    freight:+$('f_freight').value||0,cc:+$('f_cc').value||0,duty:+$('f_duty').value||0,trucking:+$('f_trucking').value||0,etc:+$('f_etc').value||0,
+    cc:+$('f_cc').value||0,trucking:+$('f_trucking').value||0,etc:+$('f_etc').value||0,
     note:$('f_note').value};
+  const F=readCost('freight'), D=readCost('duty');
+  rec.freight=F.v; rec.freightSrc=F.src; rec.duty=D.v; rec.dutySrc=D.src;
   if(!rec.qty){ toast('수량을 입력하세요'); return; }
   if(rec.invType==='상품' && !rec.plantEta){ toast('상품은 창고입고일(Plant ETA)이 필요합니다'); return; }
   if(id) await dbUpdate('inbound',id,rec,'입고 수정'); else await dbAdd('inbound',{id:uid('in'),...rec},'입고 등록');
@@ -1371,6 +1429,114 @@ async function saveOutbound(id){
   }
   if(id) await dbUpdate('outbound',id,rec,'출고 수정'); else await dbAdd('outbound',{id:uid('out'),...rec},'출고 등록');
   closeModal(); toast(id?'출고 수정 완료':'출고 등록 완료 — 코드: '+outCode(rec));
+}
+
+/* ---------- 운임·관세 미확정 관리 ---------- */
+function readCost(f){
+  const raw=$('f_'+f).value.trim(); if(raw==='') return {v:null, src:null};
+  return {v:+raw||0, src:$('f_'+f+'Ok').checked?'actual':'default'};
+}
+function costTouched(f){ $('f_'+f+'Ok').checked = $('f_'+f).value.trim()!==''; calcIn(); }
+function fillDefault(f){
+  const r={item:$('f_item').value, amount:+$('f_amount').value||0};
+  if(f==='duty' && dutyRate(r.item)==null){ toast(r.item+' 기본 관세율이 없습니다 (설정에서 지정)'); return; }
+  $('f_'+f).value = f==='freight'? estFreight(r) : estDuty(r);
+  $('f_'+f+'Ok').checked=false; calcIn();
+}
+function costCell(r,f){
+  const st=costSt(r,f);
+  if(st==='actual') return fmt2(+r[f]||0);
+  const v = f==='freight'? effFreight(r) : effDuty(r);
+  return `<span class="est-val" title="${st==='missing'?'실제 금액 미입력 — 기본값 추정치로 원가 계산':'기본값 입력 — 실제 금액 미확정'}">${fmt2(v)}</span> <span class="tag ${st==='missing'?'est-miss':'est-def'}">${ST_TXT[st]}</span>`;
+}
+function estTag(r){
+  if(!isEst(r)) return '';
+  const p=[]; ['freight','duty'].forEach(f=>{ const st=costSt(r,f); if(st!=='actual') p.push((f==='freight'?'운임 ':'관세 ')+ST_TXT[st]); });
+  return ` <span class="tag est-miss" title="${p.join(' · ')} — 추정치 포함">추정</span>`;
+}
+function costWarnBanner(onInbound){
+  const P=pendingCost(); if(!P.length) return '';
+  const nF=P.filter(r=>costSt(r,'freight')!=='actual').length, nD=P.filter(r=>costSt(r,'duty')!=='actual').length;
+  const nMissD=P.filter(r=>costSt(r,'duty')==='missing').length;
+  const est=P.reduce((s,r)=>s+(costSt(r,'freight')!=='actual'?effFreight(r):0)+(costSt(r,'duty')!=='actual'?effDuty(r):0),0);
+  const f=state.filters.in;
+  return `<div class="banner cost-warn">⚠️ <span><b>운임·관세 미확정 ${P.length}건</b> (상품·미착품) — 해상운송료 ${nF}건 · 관세 ${nD}건이 실제 금액 없이 원가에 반영 중 · 추정치 합계 <b>${money(est)}</b></span>
+    <span class="b-act">${onInbound && f.cost==='pending' ? '' : `<button class="btn ghost sm" onclick="app.showPending()">미확정 Lot 보기</button>`}
+    ${nMissD?`<button class="btn primary sm" onclick="app.dutyBatchModal()">관세 일괄 적용 (${nMissD}건)</button>`:`<button class="btn ghost sm" onclick="app.dutyBatchModal()">관세 일괄 적용</button>`}</span></div>`;
+}
+function showPending(){
+  state.filters.in={type:'전체',item:'',supplier:'',q:'',from:'',to:'',cost:'pending'};
+  goView('inbound');
+}
+function dutyBatchModal(){
+  const def=costDef(); const items=(state.master||SEED.master).items.map(i=>i.name);
+  openModal(`
+  <h3>관세·운임 기본값 일괄 적용</h3>
+  <div class="help" style="margin-bottom:12px">상품·미착품 중 실제 금액이 없는 Lot에 기본값을 입력합니다. 입력된 값은 <span class="tag est-def">기본값</span>(미확정)으로 표시되어
+    실무자가 실제 금액을 확인해 <b>입고 수정 → '실제 금액 확정'</b>을 체크할 때까지 계속 경고됩니다.</div>
+  <div class="form-grid">
+    <div class="fld full"><label>적용 항목</label>
+      <label class="cost-ok" style="font-size:13px;color:var(--txt)"><input type="checkbox" id="b_duty" checked onchange="app.batchPreview()"> 관세 = 인보이스 금액 × 품목별 관세율 (${items.map(n=>`${n} ${dutyRate(n)==null?'없음':(dutyRate(n)*100).toFixed(1)+'%'}`).join(' · ')})</label>
+      <label class="cost-ok" style="font-size:13px;color:var(--txt)"><input type="checkbox" id="b_freight" onchange="app.batchPreview()"> 해상운송료 = $${fmt2(def.freight)} / Lot</label></div>
+    <div class="fld full"><label>대상</label>
+      <label class="cost-ok" style="font-size:13px;color:var(--txt)"><input type="radio" name="b_scope" value="missing" checked onchange="app.batchPreview()"> 미입력 Lot만</label>
+      <label class="cost-ok" style="font-size:13px;color:var(--txt)"><input type="radio" name="b_scope" value="default" onchange="app.batchPreview()"> 미입력 + 기존 기본값 Lot 재계산 (관세율·금액 변경 후)</label></div>
+  </div>
+  <div id="b_prev" style="margin-top:12px"></div>
+  <div class="modal-actions">
+    <button class="btn ghost" onclick="app.closeModal()">취소</button>
+    <button class="btn primary" id="b_go" onclick="app.doDutyBatch()">일괄 적용</button>
+  </div>`);
+  batchPreview();
+}
+function batchTargets(){
+  const doD=$('b_duty').checked, doF=$('b_freight').checked;
+  const scope=(document.querySelector('input[name=b_scope]:checked')||{}).value||'missing';
+  const ok = st => st==='missing' || (scope==='default' && st==='default');
+  const out=[], skip=[];
+  state.inbound.filter(TRACK).forEach(r=>{
+    const patch={}, ch=[];
+    if(doD && ok(costSt(r,'duty'))){
+      if(dutyRate(r.item)==null) skip.push(r);
+      else { const v=estDuty(r); patch.duty=v; patch.dutySrc='default'; ch.push({f:'duty',label:'관세',from:fmtVal('duty',r.duty),to:fmtVal('duty',v)}); }
+    }
+    if(doF && ok(costSt(r,'freight'))){ const v=estFreight(r); patch.freight=v; patch.freightSrc='default'; ch.push({f:'freight',label:'해상운송료',from:fmtVal('freight',r.freight),to:fmtVal('freight',v)}); }
+    if(ch.length) out.push({r,patch,ch});
+  });
+  return {out,skip:[...new Set(skip)]};
+}
+function batchPreview(){
+  const {out,skip}=batchTargets();
+  $('b_go').disabled=!out.length; $('b_go').textContent=out.length?`일괄 적용 (${out.length}건)`:'대상 없음';
+  $('b_prev').innerHTML = (out.length? `<div class="tbl-scroll" style="max-height:300px;overflow-y:auto"><table><thead><tr><th>구분</th><th>INVOICE</th><th>품목</th><th class="num">금액($)</th><th>적용</th></tr></thead><tbody>
+    ${out.map(o=>`<tr><td>${invTag(o.r.invType)}</td><td class="mono">${esc(o.r.invoice)||'-'}</td><td>${esc(o.r.item)} ${pct(o.r.purity)}</td><td class="num">${fmt2(o.r.amount)}</td>
+      <td>${o.ch.map(c=>`${c.label} → <b>$${c.to}</b>`).join(' · ')}${!(+o.r.amount)&&o.patch.duty!=null?' <span class="tag warn">금액 0</span>':''}</td></tr>`).join('')}</tbody></table></div>`
+    : '<div class="empty">적용할 Lot이 없습니다</div>')
+    + (skip.length? `<div class="help" style="margin-top:6px;color:var(--red)">기본 관세율이 없는 품목 ${skip.length}건은 관세를 건너뜁니다 (${uniq(skip.map(r=>r.item)).join(', ')}) — 설정에서 관세율 지정</div>`:'');
+}
+async function doDutyBatch(){
+  const {out}=batchTargets(); if(!out.length) return;
+  if(!confirm(`${out.length}건에 기본값을 입력합니다. 실제 금액이 확정될 때까지 '기본값(미확정)'으로 경고가 유지됩니다. 계속할까요?`)) return;
+  if(fb){
+    let batch=fb.writeBatch(fb.db), n=0;
+    for(const o of out){ batch.set(fb.doc(fb.db,'inbound',o.r.id), o.patch, {merge:true}); if(++n>=400){ await batch.commit(); batch=fb.writeBatch(fb.db); n=0; } }
+    if(n) await batch.commit();
+  } else { out.forEach(o=>Object.assign(o.r,o.patch)); localSave(); }
+  logHistory({action:'운임·관세 기본값 일괄 적용', kind:'upd', col:'inbound', docId:'(일괄)',
+    summary:`${out.length}건 · 기본값(미확정)으로 입력`,
+    changes: out.flatMap(o=>o.ch.map(c=>({...c,label:(String(o.r.invoice||o.r.id).trim())+' '+c.label}))).slice(0,40)});
+  closeModal(); toast(`${out.length}건 기본값 적용 — 실제 금액 확정 전까지 경고 유지`); render();
+}
+async function saveCostDefaults(){
+  const items=(state.master||SEED.master).items.map(i=>i.name);
+  const old=costDef(); const fr=$('cd_freight').value.trim();
+  const nd={freight: fr===''?0:(+fr||0), duty:{}};
+  items.forEach(n=>{ const v=$('cd_'+n).value.trim(); nd.duty[n]= v===''? null : (+v||0)/100; });
+  state.costDefaults=nd; await saveConfigDoc(); toast('운임·관세 기본값 저장됨');
+  const ch=[]; if(+old.freight!==nd.freight) ch.push({f:'freight',label:'기본 해상운송료',from:fmt2(old.freight),to:fmt2(nd.freight)});
+  items.forEach(n=>{ const a=(old.duty||{})[n], b=nd.duty[n]; if((a??null)!==(b??null)) ch.push({f:'duty',label:n+' 관세율',from:a==null?'없음':(a*100).toFixed(2)+'%',to:b==null?'없음':(b*100).toFixed(2)+'%'}); });
+  if(ch.length) logHistory({action:'운임·관세 기본값 변경', kind:'cfg', col:'config', docId:'app', summary:'미입력 Lot 추정 기준', changes:ch});
+  render();
 }
 
 /* ---------- 미착품 → 상품 전환 ---------- */
@@ -1457,7 +1623,7 @@ function setFilter(k,field,v){
   if(id){ const el=$(id); if(el){ el.focus(); try{ el.setSelectionRange(pos,pos); }catch(e){} } }
 }
 function resetFilter(k){
-  state.filters[k] = k==='in' ? {type:'전체',item:'',supplier:'',q:'',from:'',to:''} : k==='tr' ? {item:'',basis:state.filters.tr.basis||'etd',from:'',to:''} : {cat:'전체',item:'',buyer:'',q:'',from:'',to:''};
+  state.filters[k] = k==='in' ? {type:'전체',item:'',supplier:'',q:'',from:'',to:'',cost:''} : k==='tr' ? {item:'',basis:state.filters.tr.basis||'etd',from:'',to:''} : {cat:'전체',item:'',buyer:'',q:'',from:'',to:''};
   render();
 }
 async function setBegNote(i,v){ const b=state.beginning[i]; if((b.note||'')===v) return; b.note=v; await saveConfigDoc(); toast('기초재고 근거 저장됨'); }
@@ -1519,7 +1685,7 @@ function exportExcel(){
   const wb=XLSX.utils.book_new(); const {T}=periodRange(); const asOf=T==='9999-12-31'?today():T;
   const clsAt = r => { if(r.invType==='선적예정(미인식)') return '선적예정'; const s=shipD(r), a=arrD(r);
     if(!s) return '미인식(ETD 없음)'; if(a && a<=asOf) return '상품'; if(s<=asOf) return '미착품'; return '미선적'; };
-  const inRows=state.inbound.map(r=>({재고구분:r.invType,[asOf+' 기준 구분']:clsAt(r),코드:inCode(r),품목:r.item,함량:pct(r.purity),구매처:r.supplier,용기:r.pack,ETD:r.etd,ETA:r.eta,창고입고일:r.plantEta,'BL No.':r.bl,'INVOICE No.':r.invoice,'수량(kg)':r.qty,'단가':r.price,'금액(USD)':r.amount,해상운송료:r.freight,통관비:r.cc,관세:r.duty,운송비:r.trucking,기타비용:r.etc,'총계(운임·통관·관세)':capCost(r),'원재료인식금액(운송·기타 포함)':r2(BASES.full.f(r)),['재고원가('+basisLabel()+')']:r2(invCost(r)),비고:r.note}));
+  const inRows=state.inbound.map(r=>({재고구분:r.invType,[asOf+' 기준 구분']:clsAt(r),코드:inCode(r),품목:r.item,함량:pct(r.purity),구매처:r.supplier,용기:r.pack,ETD:r.etd,ETA:r.eta,창고입고일:r.plantEta,'BL No.':r.bl,'INVOICE No.':r.invoice,'수량(kg)':r.qty,'단가':r.price,'금액(USD)':r.amount,해상운송료:r.freight,통관비:r.cc,관세:r.duty,운송비:r.trucking,기타비용:r.etc,운임상태:TRACK(r)?ST_TXT[costSt(r,'freight')]:'',관세상태:TRACK(r)?ST_TXT[costSt(r,'duty')]:'','적용 해상운송료':effFreight(r),'적용 관세':effDuty(r),'총계(운임·통관·관세)':capCost(r),'원재료인식금액(운송·기타 포함)':r2(BASES.full.f(r)),['재고원가('+basisLabel()+')']:r2(invCost(r)),비고:r.note}));
   const OC=allOutCost();
   const outRows=state.outbound.map(r=>({구분:r.category,출고코드:r.category==='충전'?'':outCode(r),품목:r.item,함량:pct(r.purity),용기:r.pack,판매처:r.buyer,출고일:r.date,'출고수량(kg)':r.qty,'판매단가($/kg)':r.qty?+(r.amount/r.qty).toFixed(4):'','출고금액(매출 USD)':r.amount,'출고원가':r.category==='충전'?'':(OC.has(r)?OC.get(r):''),'Shuttle':r.shuttle,비고:r.note}));
   const L=computeLedger(); const t=ledgerTotals(L);
@@ -1550,7 +1716,7 @@ function exportExcel(){
 }
 
 /* ================= 초기화 ================= */
-window.app = {chkDraft,closeCheck,reopenCheck,chkShowClosed,exportChecks,setBasis,setAvg,chkToggle,setBegNote,trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
+window.app = {readCost,costTouched,fillDefault,showPending,dutyBatchModal,batchPreview,doDutyBatch,saveCostDefaults,chkDraft,closeCheck,reopenCheck,chkShowClosed,exportChecks,setBasis,setAvg,chkToggle,setBegNote,trPeriod,inboundModal,outboundModal,convertModal,shipModal,doConvert,saveInbound,saveOutbound,closeModal,
   syncPurity,syncPurityOut,calcIn,calcOut,del,setFilter,resetFilter,setBeg,addBuyer,
   applyPeriod,quickPeriod,chartMode,
   loadSeed,connect,disconnect,backup,wipe,exportExcel,googleLogin,logout,
@@ -1573,7 +1739,5 @@ window.app = {chkDraft,closeCheck,reopenCheck,chkShowClosed,exportChecks,setBasi
   render();
 })();
 </script>
-<style>.ytk-copyright{text-align:center;font-size:11px;line-height:1.4;color:#8a8f98;padding:10px 12px;font-family:inherit}@media print{.ytk-copyright{display:none}}</style>
-<div class="ytk-copyright">© 2025–2026 Young Tai Kang. All rights reserved. Unauthorized use, copying, modification, or distribution without the written permission of Young Tai Kang is prohibited.</div>
 </body>
 </html>
